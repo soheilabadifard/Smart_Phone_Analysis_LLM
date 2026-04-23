@@ -1,24 +1,27 @@
-# [gsmarena](https://www.gsmarena.com/) Data Scraping and Visualization Project
+# Smartphone Database Platform
 
 ## Introduction
 
-Welcome to our Data Scraping and Visualization Project! This initiative is part of our data science bootcamp, focusing on practical applications of data gathering, storage, analysis, and visualization techniques. Our primary goal is to scrape the comprehensive and dynamic [gsmarena](https://www.gsmarena.com/) website, renowned for its extensive database on mobile phones and electronic devices. By extracting detailed information on various devices, we aim to facilitate in-depth comparative analyses and insights into trends within the mobile technology sphere.
+This is a database-driven platform for smartphone recommendations, analytics, and natural-language queries, built for CIS 761 (DBMS). The application domain is smartphone data — device specifications, prices, release information, hardware features, connectivity, and brand-related characteristics — collected from public sources and organized into a structured relational database.
 
+The full proposal and E-R diagram are in `Project_Proposal.pdf`.
+
+## Use Cases
+
+1. **Phone Recommendation.** Users specify preferences such as budget, preferred brand, operating system, RAM, storage capacity, battery size, display size, camera-related features, and 5G support. The application queries the database and returns the phones that best match the user's needs, turning the database into a personalized decision-support tool.
+
+2. **Smartphone Market Analytics.** Users analyze the collected data and generate reports about trends in the smartphone market — average prices by brand, relationships between price and hardware specifications, battery-capacity trends, storage and RAM distributions, chipset popularity, and year-over-year changes in device features. This use case exercises SQL's strength in aggregation, filtering, grouping, ranking, and reporting.
+
+3. **Natural-Language Query Interface.** Users ask questions in plain English instead of writing SQL. An SLM/LLM interprets the request, translates it into SQL against the smartphone database, executes the query, and presents results in a readable form (e.g. "phones under €500 with at least 128 GB and a 5000 mAh battery", or "brands with the best average value in 2023"). This keeps the relational database as the core engine while making it accessible to non-technical users.
 
 ## Project Steps
 
-1. **Data Collection**: We began by scraping the GSM Arena website to gather data on mobile devices. This phase focused on extracting details such as specifications and prices for a wide array of devices.
-2. **Database Creation**: The next step involved designing and implementing a database to store the scraped data efficiently. This included creating tables, defining relationships, and ensuring data integrity.
-3. **Data Analysis**: With the data stored, we performed statistical analyses and hypothesis testing to uncover patterns and insights. This step helped us understand device trends, performance metrics, and market preferences.
-4. **Visualization**: Utilizing tools like Power BI, we visualized our findings through dashboards and reports. This allowed us to present our data in an accessible and impactful way, highlighting key insights and trends.
-5. **Collaboration and Documentation**: Throughout the project, teamwork and clear documentation were crucial. We used GitHub for version control and collaboration, ensuring that our project was well-documented and accessible for future reference.
-
-## Conclusion
-
-This project not only provided us with valuable insights into the mobile device market but also equipped us with practical experience in data science methodologies. From data collection to visualization, each step offered unique challenges and learning opportunities.
+1. **Data Collection.** Gather smartphone data from public sources covering specifications and prices across a wide range of devices.
+2. **Database Design.** Design and implement a normalized relational schema to store the data efficiently, with lookup tables for shared attributes and a central `Device` fact table. The E-R diagram is in `Project_Proposal.pdf`.
+3. **Recommendation Engine.** Build the query layer that maps user preferences to SQL filters and ranks matching devices.
+4. **Analytics & Reporting.** Implement the SQL analyses behind the market-analytics use case and present results in dashboards/reports.
+5. **Natural-Language Interface.** Integrate an SLM/LLM that translates English questions into SQL and renders results for end users.
 
 ## Contributors
 
-- [MahsaNouriZonouz](https://github.com/MahsaNouriZonouz)
-- [Kian Janbozorgi](https://github.com/KianJanbozorgi)
-- [foad ferdows](https://github.com/foadferdows) 
+- [Sanaz Gheibuni](https://github.com/sanaazz)

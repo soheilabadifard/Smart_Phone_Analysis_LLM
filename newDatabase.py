@@ -207,6 +207,12 @@ class launch(Base):
     id = Column(Integer, primary_key=True,autoincrement=True)
     announced_id = Column(Integer, ForeignKey('Launch_Announced.id'))
     status_id = Column(Integer, ForeignKey('Launch_Status.id'))
+
+class year(Base):
+    __tablename__ = 'Year'
+    __table_args__ = (UniqueConstraint('year', name='uq_year_value'),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    year = Column(Integer)
       
 #MAIN
 class sim(Base):
@@ -310,6 +316,7 @@ class Device(Base):
     device_name_id = Column(Integer, ForeignKey('Device_Name.id'))
     network_technology_id = Column(Integer, ForeignKey('Network_Technology.id'), nullable=True)
     launch_id = Column(Integer, ForeignKey('Launch.id'))
+    year_id = Column(Integer, ForeignKey('Year.id'))
     camera_id = Column(Integer, ForeignKey('Camera.id'))
     battery_id = Column(Integer, ForeignKey('Battery.id'), nullable=True)
     display_id = Column(Integer, ForeignKey('Display.id'), nullable=True)
@@ -434,6 +441,7 @@ class AddToTable:
             '3G',
             '4G',
             '5G',
+            'year',
         ]
         missing_columns = [column for column in required_columns if column not in dataframe.columns]
         if missing_columns:
@@ -442,7 +450,7 @@ class AddToTable:
         for source_column, target_column in [('2G', 'supports_2g'), ('3G', 'supports_3g'), ('4G', 'supports_4g'), ('5G', 'supports_5g')]:
             dataframe[target_column] = dataframe[source_column].map(extract_integer_value).fillna(0).astype(int)
 
-        for column in ['main_cameras_num', 'selfie_cameras_num', 'battery_capacity_mah', 'resolution_pixels']:
+        for column in ['main_cameras_num', 'selfie_cameras_num', 'battery_capacity_mah', 'resolution_pixels', 'year']:
             dataframe[column] = dataframe[column].map(extract_integer_value)
 
         for column in ['highest_maincam_res', 'highest_selfiecam_res']:
@@ -533,6 +541,11 @@ class AddToTable:
         sim_df = self.load_source_dataframe()[['body_sim', 'sim_count', 'sim_type']].drop_duplicates().reset_index(drop=True)
         self.append_new_rows('Sim', sim_df, ['body_sim', 'sim_count', 'sim_type'])
 
+    def addYear(self):
+        year_df = self.load_source_dataframe()[['year']].dropna().drop_duplicates().reset_index(drop=True)
+        year_df['year'] = year_df['year'].astype('Int64')
+        self.append_new_rows('Year', year_df, ['year'])
+
     def addSensor(self):
         source = self.load_source_dataframe()
         sensor_values = sorted({sensor_name for sensor_list in source['sensor_names'] for sensor_name in sensor_list})
@@ -609,7 +622,7 @@ class AddToTable:
         self.append_new_rows('Platform', platform_df, ['chipset_id', 'cpu_id', 'memory_profile_id'])
 
     def report_unresolved_device_lookups(self, device_df):
-        required_columns = ['device_name_id', 'launch_id', 'network_technology_id', 'display_id']
+        required_columns = ['device_name_id', 'launch_id', 'year_id', 'network_technology_id', 'display_id']
         missing_required = {column: int(device_df[column].isna().sum()) for column in required_columns if device_df[column].isna().any()}
         if missing_required:
             raise ValueError(f"Required device lookups failed to resolve: {missing_required}")
@@ -656,12 +669,14 @@ class AddToTable:
             'JOIN Launch_Status ON Launch_Status.id = Launch.status_id',
             con=self.connection,
         )
+        year_mapping = pd.read_sql('SELECT id AS year_id, year FROM Year', con=self.connection)
         sim_mapping = pd.read_sql('SELECT id AS sim_id, body_sim, sim_count, sim_type FROM Sim', con=self.connection)
         battery_mapping = pd.read_sql('SELECT id AS battery_id, battery_capacity_mah FROM Battery', con=self.connection)
         display_mapping = pd.read_sql('SELECT id AS display_id, display_size_inch, display_size_cm, screen_to_body_ratio, resolution_pixels, resolution_ratio, ppi_density FROM Display', con=self.connection)
 
         data = attach_lookup_id(data, sim_mapping, ['body_sim', 'sim_count', 'sim_type'], 'sim_id')
         data = attach_lookup_id(data, launch_mapping, ['launch_announced', 'launch_status'], 'launch_id')
+        data = attach_lookup_id(data, year_mapping, ['year'], 'year_id')
         data = attach_lookup_id(data, network_technology_mapping, ['network_technology', 'supports_2g', 'supports_3g', 'supports_4g', 'supports_5g'], 'network_technology_id')
         data = attach_lookup_id(data, name_mapping, ['brand', 'model'], 'device_name_id')
         data = attach_lookup_id(data, platform_mapping, ['chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb'], 'platform_id')
@@ -680,11 +695,11 @@ class AddToTable:
             'display_id',
         )
 
-        device_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'camera_id', 'battery_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
+        device_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'year_id', 'camera_id', 'battery_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
         device_df = data[device_columns + ['sensor_names']].copy()
         device_df['device_key'] = build_lookup_signature(device_df, device_columns)
 
-        id_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'camera_id', 'battery_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
+        id_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'year_id', 'camera_id', 'battery_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
         for column in id_columns:
             device_df[column] = device_df[column].astype('Int64')
 
@@ -693,7 +708,7 @@ class AddToTable:
     def addDevice(self):
         device_df = self.build_device_records()
         self.report_unresolved_device_lookups(device_df)
-        device_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'camera_id', 'battery_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
+        device_columns = ['device_name_id', 'network_technology_id', 'launch_id', 'year_id', 'camera_id', 'battery_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
         self.append_new_rows('Device', device_df[['device_key'] + device_columns], ['device_key'])
 
         device_mapping = pd.read_sql('SELECT id AS device_id, device_key FROM Device', con=self.connection)
@@ -739,6 +754,7 @@ class AddToTable:
                 self.addLaunch_Announced()
                 self.addLaunch_Status()
                 self.addLaunch()
+                self.addYear()
                 self.addSim()
                 self.addcamera()
                 self.addSensor()
