@@ -6,14 +6,14 @@ from sqlalchemy import Column, Integer, String, ForeignKey, text, Float, UniqueC
 from sqlalchemy.orm import declarative_base, relationship
 from database_eng import *
 import pandas as pd
-import os as os_module
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 Base = declarative_base()
 def require_env(name):
-    value = os_module.getenv(name)
+    value = os.getenv(name)
     if value is None or value.strip() == "":
         raise ValueError(f"Missing required environment variable: {name}")
     return value
@@ -158,26 +158,26 @@ class CreateTable:
         Base.metadata.create_all(bind=engine, checkfirst=True)
  
 #MAIN
-class device_name(Base):
+class DeviceName(Base):
     __tablename__ = 'Device_Name'
     __table_args__ = (UniqueConstraint('brand', 'model', name='uq_device_name_brand_model'),)
     id = Column(Integer, primary_key=True,autoincrement=True)
     brand = Column(String(255), nullable=False)
     model = Column(String(255), nullable=False)
-    
+
 #MAIN
-class Network_Technology(Base):
+class NetworkTechnology(Base):
     __tablename__ = 'Network_Technology'
     __table_args__ = (UniqueConstraint('technology', name='uq_network_technology_name'),)
     id = Column(Integer, primary_key=True,autoincrement=True)
     technology = Column(String(255), nullable=False)
-    
+
 #MAIN
-class sim(Base):
+class Sim(Base):
     __tablename__ = 'Sim'
     __table_args__ = (
         UniqueConstraint('body_sim', 'sim_count', 'sim_type', name='uq_sim_triplet'),
-        CheckConstraint('sim_count >= 1', name='ck_sim_count_min'),
+        CheckConstraint("sim_count IN ('single', 'dual', 'both')", name='ck_sim_count_valid'),
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
     body_sim = Column(String(255))
@@ -185,7 +185,7 @@ class sim(Base):
     sim_type = Column(String(32), nullable=False)
 
 #MAIN
-class camera(Base):
+class Camera(Base):
     __tablename__ = 'Camera'
     __table_args__ = (
         UniqueConstraint('main_cameras_num', 'selfie_cameras_num', 'highest_maincam_res', 'highest_selfiecam_res', name='uq_camera_profile'),
@@ -202,7 +202,7 @@ class camera(Base):
     
     
 #MAIN
-class display(Base):
+class Display(Base):
     __tablename__ = 'Display'
     __table_args__ = (
         UniqueConstraint('display_size_inch', 'resolution_pixels', 'resolution_ratio', 'ppi_density', name='uq_display_profile'),
@@ -220,15 +220,15 @@ class display(Base):
     ppi_density = Column(Float)
     
 #MAIN
-class os(Base):
+class Os(Base):
     __tablename__ = 'OS'
     __table_args__ = (UniqueConstraint('os_name', 'os_version', name='uq_os_pair'),)
     id = Column(Integer, primary_key=True,autoincrement=True)
     os_name = Column(String(255), nullable=False)
     os_version = Column(String(255))
-    
+
 #MAIN
-class platform(Base):
+class Platform(Base):
     __tablename__ = 'Platform'
     __table_args__ = (
         UniqueConstraint('chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb', name='uq_platform_profile'),
@@ -238,7 +238,7 @@ class platform(Base):
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
     chipset_manufacturer = Column(String(255), nullable=False)
-    cpu_core_count = Column(String(255))
+    cpu_core_count = Column(Integer, nullable=False)
     internal_storage_gb = Column(Integer, nullable=False)
     ram_gb = Column(Integer, nullable=False)
     
@@ -420,8 +420,8 @@ class AddToTable:
         return dataframe
 
     def addDeviceName(self):
-        device_name = self.load_source_dataframe()[['brand', 'model']].drop_duplicates().reset_index(drop=True)
-        self.append_new_rows('Device_Name', device_name, ['brand', 'model'])
+        device_name_df = self.load_source_dataframe()[['brand', 'model']].drop_duplicates().reset_index(drop=True)
+        self.append_new_rows('Device_Name', device_name_df, ['brand', 'model'])
 
     def addNetworkTechnology(self):
         tech_df = self.load_source_dataframe()[['network_technology']].rename(columns={'network_technology': 'technology'})
@@ -532,8 +532,8 @@ if __name__ == '__main__':
     db_password = require_env('DB_PASSWORD')
     db_host = require_env('DB_HOST')
     db_port = int(require_env('DB_PORT'))
-    recreate_database = os_module.getenv('RECREATE_DATABASE', 'true').lower() == 'true'
-    reset_tables = os_module.getenv('RESET_TABLES', 'true').lower() == 'true'
+    recreate_database = os.getenv('RECREATE_DATABASE', 'true').lower() == 'true'
+    reset_tables = os.getenv('RESET_TABLES', 'true').lower() == 'true'
 
     creator = CreateTable(
         db_name,
