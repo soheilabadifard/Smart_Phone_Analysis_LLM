@@ -176,11 +176,10 @@ class NetworkTechnology(Base):
 class Sim(Base):
     __tablename__ = 'Sim'
     __table_args__ = (
-        UniqueConstraint('body_sim', 'sim_count', 'sim_type', name='uq_sim_triplet'),
-        CheckConstraint("sim_count IN ('single', 'dual', 'both')", name='ck_sim_count_valid'),
+        UniqueConstraint('sim_count', 'sim_type', name='uq_sim_pair'),
+        CheckConstraint("sim_count IN ('single', 'dual', 'triple', 'none')", name='ck_sim_count_valid'),
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
-    body_sim = Column(String(255))
     sim_count = Column(String(32), nullable=False)
     sim_type = Column(String(32), nullable=False)
 
@@ -209,7 +208,7 @@ class Display(Base):
         CheckConstraint('display_size_inch > 0', name='ck_display_size_inch_pos'),
         CheckConstraint('display_size_cm > 0', name='ck_display_size_cm_pos'),
         CheckConstraint('ppi_density > 0', name='ck_ppi_density_pos'),
-        CheckConstraint('screen_to_body_ratio BETWEEN 0 AND 100', name='ck_screen_to_body_ratio_range'),
+        CheckConstraint('screen_to_body_ratio >= 0', name='ck_screen_to_body_ratio_range'),
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
     display_size_inch = Column(Float, nullable=False)
@@ -385,7 +384,7 @@ class AddToTable:
         for source_column, target_column in [('2G', 'supports_2g'), ('3G', 'supports_3g'), ('4G', 'supports_4g'), ('5G', 'supports_5g')]:
             dataframe[target_column] = dataframe[source_column].map(extract_integer_value).fillna(0).astype(int)
 
-        for column in ['main_cameras_num', 'selfie_cameras_num', 'battery_capacity_mah', 'resolution_pixels', 'year']:
+        for column in ['main_cameras_num', 'selfie_cameras_num', 'battery_capacity_mah', 'resolution_pixels', 'year', 'cpu_core_count']:
             dataframe[column] = dataframe[column].map(extract_integer_value)
 
         for column in ['highest_maincam_res', 'highest_selfiecam_res']:
@@ -429,8 +428,9 @@ class AddToTable:
         self.append_new_rows('Network_Technology', tech_df, ['technology'])
 
     def addSim(self):
-        sim_df = self.load_source_dataframe()[['body_sim', 'sim_count', 'sim_type']].drop_duplicates().reset_index(drop=True)
-        self.append_new_rows('Sim', sim_df, ['body_sim', 'sim_count', 'sim_type'])
+        unique_keys = ['sim_count', 'sim_type']
+        sim_df = self.load_source_dataframe()[unique_keys].dropna(subset=unique_keys).drop_duplicates(subset=unique_keys).reset_index(drop=True)
+        self.append_new_rows('Sim', sim_df, unique_keys)
 
     def addcamera(self):
         camera_df = self.load_source_dataframe()[['main_cameras_num', 'selfie_cameras_num', 'highest_maincam_res', 'highest_selfiecam_res']].drop_duplicates().reset_index(drop=True)
@@ -439,19 +439,21 @@ class AddToTable:
         self.append_new_rows('Camera', camera_df, ['main_cameras_num', 'selfie_cameras_num', 'highest_maincam_res', 'highest_selfiecam_res'])
     
     def addDisplay(self):
-        display_df = self.load_source_dataframe()[['display_size_inch', 'display_size_cm', 'screen_to_body_ratio', 'resolution_pixels', 'resolution_ratio', 'ppi_density']].drop_duplicates().reset_index(drop=True)
+        unique_keys = ['display_size_inch', 'resolution_pixels', 'resolution_ratio', 'ppi_density']
+        display_df = self.load_source_dataframe()[['display_size_inch', 'display_size_cm', 'screen_to_body_ratio', 'resolution_pixels', 'resolution_ratio', 'ppi_density']].drop_duplicates(subset=unique_keys).reset_index(drop=True)
         display_df['resolution_pixels'] = display_df['resolution_pixels'].astype('Int64')
-        self.append_new_rows('Display', display_df, ['display_size_inch', 'display_size_cm', 'screen_to_body_ratio', 'resolution_pixels', 'resolution_ratio', 'ppi_density'])
+        self.append_new_rows('Display', display_df, unique_keys)
     
     def addOs(self):
         os_df = self.load_source_dataframe()[['os_name', 'os_version']].drop_duplicates().reset_index(drop=True)
         self.append_new_rows('OS', os_df, ['os_name', 'os_version'])
     
     def addPlatform(self):
-        platform_df = self.load_source_dataframe()[['chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb']].drop_duplicates().reset_index(drop=True)
-        for column in ['internal_storage_gb', 'ram_gb']:
-            platform_df[column] = platform_df[column].astype('Int64')
-        self.append_new_rows('Platform', platform_df, ['chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb'])
+        unique_keys = ['chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb']
+        platform_df = self.load_source_dataframe()[unique_keys].dropna(subset=unique_keys).drop_duplicates(subset=unique_keys).reset_index(drop=True)
+        for column in ['cpu_core_count', 'internal_storage_gb', 'ram_gb']:
+            platform_df[column] = pd.to_numeric(platform_df[column], errors='coerce').astype('Int64')
+        self.append_new_rows('Platform', platform_df, unique_keys)
 
     def report_unresolved_device_lookups(self, device_df):
         required_columns = ['device_name_id', 'network_technology_id', 'camera_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
@@ -469,10 +471,10 @@ class AddToTable:
         os_mapping = pd.read_sql('SELECT id AS os_id, os_name, os_version FROM OS', con=self.connection)
         platform_mapping = pd.read_sql('SELECT id AS platform_id, chipset_manufacturer, cpu_core_count, internal_storage_gb, ram_gb FROM Platform', con=self.connection)
         network_technology_mapping = pd.read_sql('SELECT id AS network_technology_id, technology AS network_technology FROM Network_Technology', con=self.connection)
-        sim_mapping = pd.read_sql('SELECT id AS sim_id, body_sim, sim_count, sim_type FROM Sim', con=self.connection)
+        sim_mapping = pd.read_sql('SELECT id AS sim_id, sim_count, sim_type FROM Sim', con=self.connection)
         display_mapping = pd.read_sql('SELECT id AS display_id, display_size_inch, display_size_cm, screen_to_body_ratio, resolution_pixels, resolution_ratio, ppi_density FROM Display', con=self.connection)
 
-        data = attach_lookup_id(data, sim_mapping, ['body_sim', 'sim_count', 'sim_type'], 'sim_id')
+        data = attach_lookup_id(data, sim_mapping, ['sim_count', 'sim_type'], 'sim_id')
         data = attach_lookup_id(data, network_technology_mapping, ['network_technology'], 'network_technology_id')
         data = attach_lookup_id(data, name_mapping, ['brand', 'model'], 'device_name_id')
         data = attach_lookup_id(data, platform_mapping, ['chipset_manufacturer', 'cpu_core_count', 'internal_storage_gb', 'ram_gb'], 'platform_id')
@@ -486,7 +488,7 @@ class AddToTable:
         data = attach_lookup_id(
             data,
             display_mapping,
-            ['display_size_inch', 'display_size_cm', 'screen_to_body_ratio', 'resolution_pixels', 'resolution_ratio', 'ppi_density'],
+            ['display_size_inch', 'resolution_pixels', 'resolution_ratio', 'ppi_density'],
             'display_id',
         )
 
@@ -505,7 +507,12 @@ class AddToTable:
 
     def addDevice(self):
         device_df = self.build_device_records()
-        self.report_unresolved_device_lookups(device_df)
+        required_fks = ['device_name_id', 'network_technology_id', 'camera_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
+        before = len(device_df)
+        device_df = device_df.dropna(subset=required_fks).reset_index(drop=True)
+        dropped = before - len(device_df)
+        if dropped:
+            print(f"Dropping {dropped} device rows with unresolved FK lookups (incomplete source data)")
         device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
         self.append_new_rows('Device', device_df[['device_key'] + device_columns], ['device_key'])
 
