@@ -23,6 +23,7 @@ class DataPreProcess:
             'Main Camera_Penta': 5,
             'Main Camera_Five': 5
         }
+        self.df['Number of main cameras'] = 0
         for col, num in camera_types.items():
             self.df.loc[self.df[col].notnull(), 'Number of main cameras'] = num
 
@@ -32,13 +33,20 @@ class DataPreProcess:
             'Selfie camera_Dual': 2,
             'Selfie camera_Triple': 3
         }
+        self.df['Number of selfie cameras'] = 0
         for col, num in camera_types.items():
             self.df.loc[self.df[col].notnull(), 'Number of selfie cameras'] = num
 
     def get_highest_res(self, cell):
         cell = str(cell)
-        if 'MP' in cell:
-            cell = cell.split('MP')[0].strip()
+        matches = re.findall(r'(\d+(?:\.\d+)?)\s*MP', cell)
+        if matches:
+            return str(max(float(m) for m in matches))
+        legacy_mp = {'qcif': 0.025, 'qvga': 0.077, 'cif': 0.101, 'vga': 0.307, 'svga': 0.480}
+        cell_lower = cell.lower()
+        legacy_hits = [v for k, v in legacy_mp.items() if re.search(r'\b' + k + r'\b', cell_lower)]
+        if legacy_hits:
+            return str(max(legacy_hits))
         return cell
 
     def get_video_res(self, cell):
@@ -114,38 +122,11 @@ class DataPreProcess:
         self.df['weight'] = weight
 
     def network_tech_process(self):
-        self.df['Network_2G bands'].fillna(0, inplace=True)
-        self.df['Network_3G bands'].fillna(0, inplace=True)
-        self.df['Network_4G bands'].fillna(0, inplace=True)
-        self.df['Network_5G bands'].fillna(0, inplace=True)
-        net_2g = []
-        for x in list(self.df['Network_2G bands']):
-            if x == 0:
-                net_2g.append(0)
-            else:
-                net_2g.append(1)
-        self.df['2G'] = net_2g
-        net_3g = []
-        for x in list(self.df['Network_3G bands']):
-            if x == 0:
-                net_3g.append(0)
-            else:
-                net_3g.append(1)
-        self.df['3G'] = net_3g
-        net_4g = []
-        for x in list(self.df['Network_4G bands']):
-            if x == 0:
-                net_4g.append(0)
-            else:
-                net_4g.append(1)
-        self.df['4G'] = net_4g
-        net_5g = []
-        for x in list(self.df['Network_5G bands']):
-            if x == 0:
-                net_5g.append(0)
-            else:
-                net_5g.append(1)
-        self.df['5G'] = net_5g
+        for src, dst in [('Network_2G bands', '2G'),
+                         ('Network_3G bands', '3G'),
+                         ('Network_4G bands', '4G'),
+                         ('Network_5G bands', '5G')]:
+            self.df[dst] = self.df[src].notna().astype(int)
 
     def battery_capacity_process(self):
         battery_capacity = []
@@ -192,30 +173,42 @@ class DataPreProcess:
         type_sim = []
         count = []
         for x in list(self.df['Body_SIM']):
-            try:
-                x_lower = x.lower()
-                nano = x_lower.find('nano')
-                mini = x_lower.find('mini')
-                micro = x_lower.find('micro')
-                if nano > -1:
-                    type_sim.append('nano')
-                elif micro > -1:
-                    type_sim.append('micro')
-                elif mini > -1:
-                    type_sim.append('mini')
-                else:
-                    type_sim.append('unknown')
-                dual = x_lower.find('dual')
-                single = x_lower.find('single')
-                if (single > -1) & (dual > -1):
-                    count.append('both')
-                elif dual > -1:
-                    count.append('dual')
-                else:
-                    count.append('single')
-            except:
+            if not isinstance(x, str):
                 type_sim.append(np.nan)
                 count.append(np.nan)
+                continue
+
+            x_lower = x.lower().strip()
+
+            if x_lower in ('no', 'none', '-'):
+                type_sim.append('none')
+                count.append('none')
+                continue
+
+            if 'nano' in x_lower:
+                type_sim.append('nano')
+            elif 'micro' in x_lower:
+                type_sim.append('micro')
+            elif 'mini' in x_lower:
+                type_sim.append('mini')
+            elif 'esim' in x_lower:
+                type_sim.append('esim')
+            else:
+                type_sim.append('unknown')
+
+            has_single = 'single' in x_lower
+            has_dual = 'dual' in x_lower
+            has_triple = 'triple' in x_lower
+            if has_triple:
+                count.append('triple')
+            elif has_dual:
+                count.append('dual')
+            elif has_single:
+                count.append('single')
+            elif 'sim' in x_lower or x_lower == 'yes':
+                count.append('single')
+            else:
+                count.append('none')
         self.df['SIM_type'] = type_sim
         self.df['SIM_count'] = count
 
@@ -253,13 +246,12 @@ class DataPreProcess:
         )
 
     def _extract_version_number(self, os_string):
-
-        if isinstance(os_string, str):
-            # Adjusted regex pattern to capture only the numeric part before any spaces or additional text
-            match = re.search(r'\b(?:Android|iOS|Windows)\b\s([\d]+)', os_string)
-            if match:
-                return match.group(1)  # Return only the numeric part of the version
-        return "Unknown"
+        if not isinstance(os_string, str):
+            return np.nan
+        match = re.search(r'\b(\d+(?:\.\d+)*)\b', os_string)
+        if match:
+            return match.group(1)
+        return np.nan
 
     def extract_chipset_manufacturer(self):
         manufacturers = ["Qualcomm", "Mediatek", "Apple", "Samsung", "Exynos", "Intel Atom"]
@@ -268,9 +260,17 @@ class DataPreProcess:
         )
 
     def extract_cpu_core_count(self):
-        self.df['CPU_Core_Count'] = self.df['Platform_CPU'].apply(
-            lambda x: self._extract_with_regex(x, r'(Dual|Quad|Hexa|Octa|Deca)-core')
-        )
+        keyword_to_count = {'dual': 2, 'quad': 4, 'hexa': 6, 'octa': 8, 'deca': 10}
+
+        def _count(value):
+            if not isinstance(value, str) or not value.strip():
+                return np.nan
+            match = re.search(r'(Dual|Quad|Hexa|Octa|Deca)-core', value, re.IGNORECASE)
+            if match:
+                return keyword_to_count[match.group(1).lower()]
+            return 1
+
+        self.df['CPU_Core_Count'] = self.df['Platform_CPU'].apply(_count)
 
     def preprocess_memory_card_slot(self):
 
@@ -472,12 +472,24 @@ class DataPreProcess:
         self.df['Launch_Announced'] = self.df['Launch_Announced'].replace('Not announced yet', np.nan)
         self.df['year'] = self.df['Launch_Announced'].str.extract(r'(\d{4})')
         self.df = self.df[self.df['year'].astype(float) > 2010]
+        self.df['Launch_Status'] = self.df['Launch_Status'].apply(self._normalize_launch_status)
         self.df['Resolution_Pixels'] = self.df['Resolution_Pixels'].fillna('0 x 0')
         self.df['Resolution_Pixels'] = self.df['Resolution_Pixels'].astype(str)
         self.df['Resolution_Pixels'] = self.df['Resolution_Pixels'].apply(
             lambda x: int(x.split(' x ')[0]) * int(x.split(' x ')[1]) if x != 'nan' else np.nan)
         self.df['Screen_To_Body_Ratio'] = pd.to_numeric(self.df['Screen_To_Body_Ratio'], errors='coerce')
         self.df['PPI_Density'] = pd.to_numeric(self.df['PPI_Density'], errors='coerce')
+
+    @staticmethod
+    def _normalize_launch_status(value):
+        if not isinstance(value, str):
+            return None
+        v = value.strip().lower()
+        if v.startswith('available'): return 'Available'
+        if 'discontinued' in v:        return 'Discontinued'
+        if 'cancel' in v:              return 'Canceled'
+        if 'rumor' in v or 'coming' in v: return 'Rumored'
+        return None
 
     def year_to_int(self):
         int_year = []
@@ -513,7 +525,8 @@ class DataPreProcess:
         return self.df
 
 
-extra = pd.read_csv('pricing.csv')
-data_processor = DataPreProcess('flattened_data.csv')
-data_processor.process(extra)
-data_processor.save_processed_data('processed_data.csv')
+if __name__ == '__main__':
+    extra = pd.read_csv('pricing.csv')
+    data_processor = DataPreProcess('flattened_data.csv')
+    data_processor.process(extra)
+    data_processor.save_processed_data('processed_data.csv')
