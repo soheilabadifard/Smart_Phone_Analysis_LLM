@@ -1,2 +1,15 @@
 processed_data.csv
 .env
+
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.venv/
+venv/
+
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+backend/.venv/
