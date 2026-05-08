@@ -25,6 +25,7 @@ class RecommendRequest(BaseModel):
     min_display_inch: float | None = Field(None, ge=0)
     max_display_inch: float | None = Field(None, ge=0)
     require_5g: bool = False
+    form_factor: Literal["phone", "watch", "tablet", "band", "other", "any"] = "phone"
     sort_by: Literal["price", "battery", "ram", "year"] = "price"
     sort_order: Literal["asc", "desc"] = "asc"
     limit: int = Field(50, ge=1, le=200)
@@ -76,6 +77,9 @@ def recommend(req: RecommendRequest) -> list[PhoneCard]:
         params["max_disp"] = req.max_display_inch
     if req.require_5g:
         where.append("nt.technology LIKE '%5G%'")
+    if req.form_factor != "any":
+        where.append("d.form_factor = :form_factor")
+        params["form_factor"] = req.form_factor
 
     sort_col = {
         "price": "d.price_eur",
