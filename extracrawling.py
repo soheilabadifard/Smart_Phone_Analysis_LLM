@@ -1,64 +1,78 @@
+"""Scrape per-config pricing for multi-configuration devices on GSMArena.
+
+flattened_data.csv lists each phone once with `Memory_Internal` containing
+multiple comma-separated configurations (e.g. "128GB 6GB RAM, 256GB 8GB RAM").
+GSMArena hosts a per-config price table on each device page; this script
+walks devices with >1 config, scrapes that table, and emits pricing.json.
+
+`pricing_json_to_csv.py` then converts the JSON to the columnar format the
+cleaner consumes.
+"""
+
 import json
 import pandas as pd
 from bs4 import BeautifulSoup
+
 from crawl import HttpRequestManager
-
-# Load JSON file
-json_file_path = 'phone_models.json'
-with open(json_file_path, 'r') as f:
-    phone_links = json.load(f)
-
-# Load CSV file
-csv_file_path = 'flattened_data.csv'
-data = pd.read_csv(csv_file_path)
-
-# Check for multiple configurations
-data['Config_Count'] = data['Memory_Internal'].apply(lambda x: len(str(x).split(',')) if pd.notna(x) else 0)
-devices_with_multiple_configs = data[data['Config_Count'] > 1]
 
 
 def scrape_pricing(rsp):
-
-    # Parse the HTML content of the page
     soup = BeautifulSoup(rsp, 'html.parser')
-    # save the parsed content to a file
-
     table = soup.find('table', class_='pricing inline widget')
-
-    # Initialize a dictionary to hold configuration and its first price
-    if table:
-        config_prices = {}
-
-        for tr in table.find_all('tr'):
-            # Extracting configuration and the first price link
-            config = tr.find('td').text.strip()
-            price_link = tr.find('a')
-            if price_link:
-                price = price_link.text.strip()
-                config_prices[config] = price
-
-        return config_prices
-    else:
+    if not table:
         return None
+    config_prices = {}
+    for tr in table.find_all('tr'):
+        config = tr.find('td').text.strip()
+        price_link = tr.find('a')
+        if price_link:
+            config_prices[config] = price_link.text.strip()
+    return config_prices
 
-# Example usage
-final_dic={}
-html = HttpRequestManager()
 
-for index, row in devices_with_multiple_configs.iterrows():
-    model_url = None
+def build_model_url_index(phone_links):
+    """Flatten the brand→model→url nested dict into model→url for O(1) lookup.
 
-    for brand, models in phone_links.items():
-        # Adjust the key access if your CSV uses different naming
-        if row['model'] in models.keys():
-            model_url = models[row['model']]
-            break  # Found the URL, no need to continue searching
-    if model_url:
-        final_dic[row['model']] = scrape_pricing(html.fetch(model_url))
+    Replaces the previous O(N×M) nested-loop scan in the main path.
+    """
+    return {
+        model: url
+        for models in phone_links.values()
+        for model, url in models.items()
+    }
+
+
+def main(
+    phone_models_path='phone_models.json',
+    flattened_csv='flattened_data.csv',
+    out_path='pricing.json',
+):
+    with open(phone_models_path) as f:
+        phone_links = json.load(f)
+    data = pd.read_csv(flattened_csv)
+
+    data['Config_Count'] = data['Memory_Internal'].apply(
+        lambda x: len(str(x).split(',')) if pd.notna(x) else 0
+    )
+    devices_with_multiple_configs = data[data['Config_Count'] > 1]
+
+    model_to_url = build_model_url_index(phone_links)
+    final_dic = {}
+    http = HttpRequestManager()
+
+    for _, row in devices_with_multiple_configs.iterrows():
+        model_url = model_to_url.get(row['model'])
+        if not model_url:
+            print(f"No URL found for {row['model']}")
+            continue
+        final_dic[row['model']] = scrape_pricing(http.fetch(model_url))
         print(f"Scraped {final_dic[row['model']]}")
-    else:
-        print(f"No URL found for {row['model']}")
+        # Incremental save — if we crash at row N we keep N-1 results.
+        with open(out_path, 'w') as f:
+            json.dump(final_dic, f, indent=4)
 
-# Save the dictionary to a JSON file
-with open('pricing.json', 'w') as f:
-    json.dump(final_dic, f, indent=4)
+    return final_dic
+
+
+if __name__ == '__main__':
+    main()
