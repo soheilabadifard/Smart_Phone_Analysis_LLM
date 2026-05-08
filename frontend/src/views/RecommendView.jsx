@@ -9,10 +9,20 @@ const initialFilters = {
   min_display_inch: '',
   max_display_inch: '',
   require_5g: false,
+  form_factor: 'phone',
   sort_by: 'price',
   sort_order: 'asc',
   limit: 50,
 }
+
+const FORM_FACTORS = [
+  { value: 'phone', label: 'Phone' },
+  { value: 'watch', label: 'Watch' },
+  { value: 'tablet', label: 'Tablet' },
+  { value: 'band', label: 'Band' },
+  { value: 'other', label: 'Other' },
+  { value: 'any', label: 'Any' },
+]
 
 export default function RecommendView() {
   const [filters, setFilters] = useState(initialFilters)
@@ -111,6 +121,12 @@ export default function RecommendView() {
             Require 5G
           </label>
           <label>
+            Form factor
+            <select value={filters.form_factor} onChange={(e) => update('form_factor', e.target.value)}>
+              {FORM_FACTORS.map((f) => (<option key={f.value} value={f.value}>{f.label}</option>))}
+            </select>
+          </label>
+          <label>
             Sort by
             <select value={filters.sort_by} onChange={(e) => update('sort_by', e.target.value)}>
               <option value="price">Price</option>
@@ -140,7 +156,7 @@ export default function RecommendView() {
           <table>
             <thead>
               <tr>
-                <th>Brand</th><th>Model</th><th>Year</th><th>Price (€)</th>
+                <th>Brand</th><th>Model</th><th>Year</th><th>Type</th><th>Price (€)</th>
                 <th>RAM</th><th>Storage</th><th>Battery</th><th>Display</th>
                 <th>OS</th><th>Chipset</th>
               </tr>
@@ -151,6 +167,7 @@ export default function RecommendView() {
                   <td>{r.brand}</td>
                   <td>{r.model}</td>
                   <td>{r.year}</td>
+                  <td style={{ textTransform: 'capitalize' }}>{r.form_factor}</td>
                   <td>{r.price_eur ?? '—'}</td>
                   <td>{r.ram_gb ?? '—'}</td>
                   <td>{r.storage_gb ?? '—'}</td>
