@@ -92,7 +92,7 @@ class DataExtractor:
             self.brand_links = extracted_data
             print("Brand links extracted")
 
-    def extract_phone_models(self, models_list, models_file_path=str(DATA_DIR / 'phone_models.json')):
+    def extract_phone_models(self, models_list, models_file_path=str(DATA_DIR / 'phone_models_old.json')):
         # Check if the models file exists and load it if it does
         if os.path.exists(models_file_path):
             print(f"Loading phone models from {models_file_path}")
@@ -249,8 +249,19 @@ class DataExtractor:
 
 
 def main():
-    brands_to_select = ['alcatel', 'Apple', 'Asus', 'BLU', 'HTC', 'Huawei', 'Infinix', 'Lenovo', 'LG', 'Nokia', 'Sony',
-                        'Xiaomi', 'ZTE', 'Samsung']
+    # Brand list expanded 2026-05-08 to cover post-2022 risers. The original
+    # 14 brands miss several major manufacturers that have grown significantly
+    # in the 2024-2026 window — Google (Pixel), OnePlus, Honor (post-Huawei
+    # split), Motorola (revived), and the Asian-market trio Oppo / Vivo /
+    # Realme. Nothing is included for niche but visible coverage.
+    brands_to_select = [
+        # Original 14 — kept for back-compat with already-crawled data
+        'alcatel', 'Apple', 'Asus', 'BLU', 'HTC', 'Huawei', 'Infinix',
+        'Lenovo', 'LG', 'Nokia', 'Sony', 'Xiaomi', 'ZTE', 'Samsung',
+        # New brands added 2026-05-08
+        'Google', 'OnePlus', 'Honor', 'Motorola', 'Realme',
+        'Oppo', 'vivo', 'Nothing',
+    ]
     interested_sections = ['Network', 'Launch', 'Body', 'Display', 'Platform', 'Memory', 'Main Camera', 'Selfie camera',
                            'Sound', 'Comms', 'Features', 'Battery', 'Misc']
 
@@ -259,7 +270,7 @@ def main():
     data_extractor.extract_brand_data()
     # data_extractor.write_json('brand links', 'brand_links.json')
     data_extractor.extract_phone_models(brands_to_select)
-    # data_extractor.write_json('phone models', 'phone_models.json')
+    # data_extractor.write_json('phone models', 'phone_models_old.json')
     data_extractor.extract_phone_info(interested_sections)
     # data_extractor.write_json('phone info', 'phone_info.json')
 

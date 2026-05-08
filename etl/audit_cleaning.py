@@ -16,12 +16,18 @@ is preserved (the post-`expand_memory_configurations` and post-year-filter
 DataFrames don't align with the raw input by index).
 """
 
+import os
+import sys
 from pathlib import Path
+
+# Ensure repo root is on sys.path so the absolute import below resolves
+# whether this is run directly or imported as `etl.audit_cleaning`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd
 
-from Data_cleaning import DataPreProcess
+from etl.Data_cleaning import DataPreProcess
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
