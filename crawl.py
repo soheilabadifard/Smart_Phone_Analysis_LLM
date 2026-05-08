@@ -29,7 +29,7 @@ class HttpRequestManager:
                 req = Request(
                     url=url,
                     headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36",
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
                         "Accept-Language": "en-US,en;q=0.9"}
                 )
                 response = urlopen(req, context=self.ctx).read().decode('utf-8')
@@ -117,98 +117,6 @@ class DataExtractor:
                     self.phone_models_links[brand] = phone_models
                     self.write_json_each(f'{brand}_models.json', phone_models)
                 print("Phone models extracted")
-
-    """def extract_phone_info(self, interested_sections):
-        for brands in self.phone_models_links.keys():
-            self.phone_info[brands] = {}
-        for brand, models in self.phone_models_links.items():
-            for model, link in models.items():
-                html = self.http_request_manager.fetch(link)
-                soup = BeautifulSoup(html, "html.parser")
-                extracted_info = {}
-                for table in soup.find_all("table"):
-                    section = table.find("th").text
-                    if section in interested_sections:
-                        extracted_info[section] = {}
-                        for row in table.find_all("tr"):
-                            info_type = row.find("td", class_="ttl").text.strip()
-                            info_value = row.find("td", class_="nfo").text.strip()
-                            extracted_info[section][info_type] = info_value
-                self.phone_info[brand][model] = extracted_info
-
-        print("Phone info extracted")"""
-
-
-    """def extract_phone_info(self, interested_sections, json_file_path=None):
-        if json_file_path:
-            with open(json_file_path, 'r') as f:
-                local_phone_models_links = json.load(f)
-
-            with open('passed_link.csv', 'w', newline='') as f:
-                writer = csv.writer(f)
-
-                for brand, models in local_phone_models_links.keys():
-                    self.phone_info[brand] = {}
-                for brand, models in local_phone_models_links.items():
-                    print(f"Extracting info for {brand}")
-                    for model, link in models.items():
-                        writer.writerow(link)
-                        html = self.http_request_manager.fetch(link)
-                        soup = BeautifulSoup(html, "html.parser")
-                        extracted_info = {}
-                        for section in interested_sections:
-                            section_found = False
-                            section_data = {}  # Initialize section dictionary to empty by default
-                            # Attempt to find the table that contains the section
-                            for table in soup.find_all("table"):
-                                th = table.find("th")  # Find the <th> element
-                                if th and th.text.strip() == section:  # Match the section
-                                    section_found = True
-                                    for row in table.find_all("tr"):
-                                        info_type_cell = row.find("td", class_="ttl")
-                                        info_value_cell = row.find("td", class_="nfo")
-                                        if info_type_cell and info_value_cell:
-                                            info_type = info_type_cell.text.strip()
-                                            info_value = info_value_cell.text.strip()
-                                            section_data[info_type] = info_value
-                                    break  # Break after finding the section
-                            if not section_found:
-                                section_data = None
-                            extracted_info[section] = section_data
-                        self.phone_info[brand][model] = extracted_info
-
-        else:
-            for brand in self.phone_models_links.keys():
-                self.phone_info[brand] = {}  # Initialize brand dictionary
-            for brand, models in self.phone_models_links.items():
-                print(f"Extracting info for {brand}")
-                for model, link in tqdm(models.items()):
-                    # for model, link in models.items():
-                    html = self.http_request_manager.fetch(link)
-                    soup = BeautifulSoup(html, "html.parser")
-                    model_info = {}  # Initialize model dictionary
-                    for section in interested_sections:
-                        section_found = False
-                        section_data = {}  # Initialize section dictionary to empty by default
-                        # Attempt to find the table that contains the section
-                        for table in soup.find_all("table"):
-                            th = table.find("th")  # Find the <th> element
-                            if th and th.text.strip() == section:  # Match the section
-                                section_found = True
-                                for row in table.find_all("tr"):
-                                    info_type_cell = row.find("td", class_="ttl")
-                                    info_value_cell = row.find("td", class_="nfo")
-                                    if info_type_cell and info_value_cell:
-                                        info_type = info_type_cell.text.strip()
-                                        info_value = info_value_cell.text.strip()
-                                        section_data[info_type] = info_value
-                                break  # Break after finding the section
-                        if not section_found:
-                            section_data = None  # Or use {} if you prefer an empty dict instead of None
-                        model_info[section] = section_data
-                    self.phone_info[brand][model] = model_info
-"""
-
 
     def load_existing_data(self, filepath):
         """Load existing data from a JSON file."""
@@ -331,60 +239,6 @@ class DataExtractor:
 
     def get_phone_info(self):
         return self.phone_info
-
-
-"""def res(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    while True:
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            break
-        else:
-            time.sleep(3)
-    return res"""
-
-"""class Crawl():
-
-    def __init__(self):
-        self.phone_links = list()
-        self.brands = ['alcatel', 'Apple', 'Asus', 'BLU', 'HTC', 'Huawei', 'Infinix', 'Lenovo', 'LG', 'Nokia', 'Sony',
-                       'Xiaomi', 'ZTE', 'Samsung']
-        self.brands_link = list()
-        self.url = 'https://www.gsmarena.com/'
-        self.crawl_brands()
-        self.phone_crawl()
-
-    def create_csv_file(self, name, listofeverything):
-        with open('./{}.csv'.format(name), '+a') as f:
-            for line in listofeverything:
-                f.write(line + '\n')
-
-    def crawl_brands(self):
-        response = res(self.url)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        soup = soup.find_all('ul')[2]
-        soup = soup.find_all('li')
-
-        for i in soup:
-            if i.text in self.brands:
-                print(i.text, 'Link crawled')
-                self.brands_link.append(self.url + i.find('a')['href'])
-
-        self.create_csv_file('brands_link', self.brands_link)
-
-    def phone_crawl(self):
-        for brand in self.brands_link:
-            response = res(brand)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            soup = soup.find('div', class_='makers')
-            soup = soup.find_all('li')
-            for i in soup:
-                self.phone_links.append(self.url + i.find('a')['href'])
-
-        self.create_csv_file('phone_links', self.phone_links)"""
 
 
 def main():
