@@ -3,6 +3,15 @@ import pandas as pd
 import re
 
 
+# FX rates used to normalize Misc_Price to EUR. Refreshed manually; the
+# scraped prices are themselves point-in-time, so live rates would be
+# misleading. Update these alongside any pipeline re-run.
+# Last refreshed: 2026-05-08.
+USD_TO_EUR = 0.93
+GBP_TO_EUR = 1.17
+INR_TO_EUR = 0.011
+
+
 class DataPreProcess:
     def __init__(self, data_input):
         # If data_input is a string, assume it's a filename. Otherwise, assume it's a DataFrame.
@@ -86,22 +95,22 @@ class DataPreProcess:
         volume = []
         for x in list(self.df['Body_Dimensions']):
             try:
-                m = re.findall('(\d+(?:\.\d+)?)', x)
+                m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 length.append(float(m[0]))
             except:
                 length.append(np.nan)
             try:
-                m = re.findall('(\d+(?:\.\d+)?)', x)
+                m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 width.append(float(m[1]))
             except:
                 width.append(np.nan)
             try:
-                m = re.findall('(\d+(?:\.\d+)?)', x)
+                m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 height.append(float(m[2]))
             except:
                 height.append(np.nan)
             try:
-                m = re.findall('(\d+(?:\.\d+)?)', x)
+                m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 volume.append(float(m[0]) * float(m[1]) * float(m[2]))
             except:
                 volume.append(np.nan)
@@ -114,7 +123,7 @@ class DataPreProcess:
         weight = []
         for x in list(self.df['Body_Weight']):
             try:
-                m = re.findall('(\d+(?:\.\d+)?)', x)
+                m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 weight.append(float(m[0]))
             except:
                 m = np.nan
@@ -132,7 +141,7 @@ class DataPreProcess:
         battery_capacity = []
         for x in list(self.df['Battery_Type']):
             try:
-                m = re.findall('(\d+)', x)
+                m = re.findall(r'(\d+)', x)
                 battery_capacity.append(int(m[0]))
             except:
                 m = np.nan
@@ -419,17 +428,14 @@ class DataPreProcess:
         extracted_prices = self.df['Misc_Price'].apply(lambda x: clean_price(x))
         self.df['Price_EUR'], self.df['Price_USD'], self.df['Price_GBP'], self.df['Price_INR'], self.df[
             'Price_Other'] = zip(*extracted_prices)
-        usd_to_eur_rate = 0.93
-        inr_to_eur_rate = 0.011
-        gbp_to_eur_rate = 1.17
         for index, row in self.df.iterrows():
             if pd.isna(row['Price_EUR']):
                 if not pd.isna(row['Price_USD']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_USD'] * usd_to_eur_rate
+                    self.df.at[index, 'Price_EUR'] = row['Price_USD'] * USD_TO_EUR
                 elif not pd.isna(row['Price_GBP']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_INR'] * gbp_to_eur_rate
+                    self.df.at[index, 'Price_EUR'] = row['Price_GBP'] * GBP_TO_EUR
                 elif not pd.isna(row['Price_INR']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_INR'] * inr_to_eur_rate
+                    self.df.at[index, 'Price_EUR'] = row['Price_INR'] * INR_TO_EUR
 
     def _extract_with_regex(self, text, pattern):
         if pd.isna(text):
