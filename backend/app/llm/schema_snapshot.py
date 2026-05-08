@@ -14,8 +14,12 @@ TABLES (columns and notes):
 Device(id, device_key, device_name_id, network_technology_id, camera_id,
        display_id, os_id, platform_id, sim_id,
        year, launch_status, battery_capacity_mah, weight, length, width,
-       height, volume, price_eur)
+       height, volume, price_eur, form_factor)
   - launch_status IN ('Available','Discontinued','Rumored','Canceled')
+  - form_factor IN ('phone','watch','tablet','band','other')
+    The dataset contains some smartwatches, tablets, and fitness bands that
+    share this schema. When a question is about phones (or doesn't specify),
+    add `WHERE d.form_factor = 'phone'` to filter them out.
   - year BETWEEN 1995 AND 2030
   - price_eur is in EUR; may be NULL for un-priced devices
   - weight (g), length/width/height (mm), volume (cc), battery_capacity_mah (mAh)
