@@ -36,6 +36,7 @@ class PhoneCard(BaseModel):
     brand: str
     model: str
     year: int
+    form_factor: str
     price_eur: float | None
     ram_gb: int | None
     storage_gb: int | None
@@ -99,7 +100,7 @@ def recommend(req: RecommendRequest) -> list[PhoneCard]:
         SELECT
             d.id AS device_id,
             dn.brand, dn.model,
-            d.year, d.price_eur,
+            d.year, d.form_factor, d.price_eur,
             p.ram_gb, p.internal_storage_gb AS storage_gb,
             d.battery_capacity_mah AS battery_mah,
             disp.display_size_inch AS display_inch,
