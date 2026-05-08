@@ -3,6 +3,8 @@
 Each endpoint returns a JSON array; the frontend renders them via Plotly.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter
 from sqlalchemy import text
 
@@ -40,8 +42,9 @@ def brand_summary() -> list[dict]:
 @router.get("/annual-launches")
 def annual_launches() -> list[dict]:
     """R2 — Year-over-year launches and avg specs."""
+    current_year = datetime.now().year
     return _rows(
-        """
+        f"""
         SELECT
             d.year,
             COUNT(*) AS launches,
@@ -51,7 +54,7 @@ def annual_launches() -> list[dict]:
             ROUND(AVG(p.internal_storage_gb), 2) AS avg_storage_gb
         FROM Device d
         JOIN Platform p ON p.id = d.platform_id
-        WHERE d.year BETWEEN 2010 AND YEAR(CURDATE())
+        WHERE d.year BETWEEN 2010 AND {current_year}
         GROUP BY d.year
         ORDER BY d.year
         """
