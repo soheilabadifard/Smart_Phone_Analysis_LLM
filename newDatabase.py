@@ -83,6 +83,33 @@ def clean_text_value(value, lowercase=False):
     return text_value
 
 
+_WATCH_TOKENS = ('watch', 'gear ', 'fitbit')
+_TABLET_TOKENS = ('tab ', 'tab a', 'tab s', 'tab pro', 'tab plus', 'tab active', 'ipad', 'matepad', 'mediapad', 'mipad', 'mi pad')
+_BAND_TOKENS = ('band', 'mi band', 'smart band')
+
+
+def derive_form_factor(model):
+    """Derive a form-factor enum from the model string.
+
+    Matches against case-folded model name. Returns one of:
+    'watch', 'tablet', 'band', 'phone' (default), 'other'.
+
+    Order matters — 'watch' wins over 'band' for things like 'Galaxy Watch
+    Active Band'. We default to 'phone' rather than 'other' because the vast
+    majority of GSMArena entries are phones; reserve 'other' for explicit use.
+    """
+    if pd.isna(model):
+        return 'other'
+    text = str(model).casefold()
+    if any(token in text for token in _WATCH_TOKENS):
+        return 'watch'
+    if any(token in text for token in _TABLET_TOKENS):
+        return 'tablet'
+    if any(token in text for token in _BAND_TOKENS):
+        return 'band'
+    return 'phone'
+
+
 def parse_sensor_list(value):
     if pd.isna(value):
         return []
@@ -255,6 +282,7 @@ class Device(Base):
         CheckConstraint('height > 0', name='ck_height_pos'),
         CheckConstraint('volume > 0', name='ck_volume_pos'),
         CheckConstraint("launch_status IN ('Available', 'Discontinued', 'Rumored', 'Canceled')", name='ck_launch_status_valid'),
+        CheckConstraint("form_factor IN ('phone', 'watch', 'tablet', 'band', 'other')", name='ck_form_factor_valid'),
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
     device_key = Column(String(64), nullable=False)
@@ -274,6 +302,7 @@ class Device(Base):
     platform_id = Column(Integer, ForeignKey('Platform.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
     sim_id = Column(Integer, ForeignKey('Sim.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
     price_eur = Column(Float)
+    form_factor = Column(String(16), nullable=False, server_default='phone')
 
 
 class AddToTable:
@@ -415,6 +444,8 @@ class AddToTable:
         for column in ['sim_type', 'sim_count']:
             dataframe[column] = dataframe[column].map(lambda value: clean_text_value(value, lowercase=True))
 
+        dataframe['form_factor'] = dataframe['model'].map(derive_form_factor)
+
         self._source_dataframe = dataframe.copy()
         return dataframe
 
@@ -492,7 +523,7 @@ class AddToTable:
             'display_id',
         )
 
-        device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
+        device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur', 'form_factor']
         device_df = data[device_columns].copy()
         device_df['device_key'] = build_lookup_signature(device_df, device_columns)
 
@@ -513,7 +544,7 @@ class AddToTable:
         dropped = before - len(device_df)
         if dropped:
             print(f"Dropping {dropped} device rows with unresolved FK lookups (incomplete source data)")
-        device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur']
+        device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur', 'form_factor']
         self.append_new_rows('Device', device_df[['device_key'] + device_columns], ['device_key'])
 
     def addAll(self):
