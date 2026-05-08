@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Data_cleaning import DataPreProcess, GBP_TO_EUR, INR_TO_EUR, USD_TO_EUR
+from etl.Data_cleaning import DataPreProcess, GBP_TO_EUR, INR_TO_EUR, USD_TO_EUR
 
 
 # ---------------------------------------------------------------------------
