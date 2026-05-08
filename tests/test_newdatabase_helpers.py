@@ -11,7 +11,7 @@ import hashlib
 import pandas as pd
 import pytest
 
-from newDatabase import (
+from etl.newDatabase import (
     build_lookup_signature,
     clean_text_value,
     extract_camera_resolution,
