@@ -14,6 +14,27 @@ Pick examples that cover patterns the model commonly gets wrong:
 
 EXAMPLES: list[tuple[str, str]] = [
     (
+        "Find me the best phone.",
+        """```sql
+-- "Best" is ambiguous; interpret as a recent flagship: high RAM, large
+-- battery, recent year, with a strong main camera. form_factor='phone'
+-- filters out watches/tablets/bands that share this schema.
+SELECT
+    dn.brand, dn.model, d.year, d.price_eur,
+    p.ram_gb, p.internal_storage_gb AS storage_gb,
+    d.battery_capacity_mah, c.highest_maincam_res
+FROM Device d
+JOIN Device_Name dn ON dn.id = d.device_name_id
+JOIN Platform    p  ON p.id  = d.platform_id
+JOIN Camera      c  ON c.id  = d.camera_id
+WHERE d.form_factor = 'phone'
+  AND d.price_eur IS NOT NULL
+  AND d.year >= 2023
+ORDER BY p.ram_gb DESC, d.battery_capacity_mah DESC, c.highest_maincam_res DESC
+LIMIT 10;
+```""",
+    ),
+    (
         "Show me iPhones priced under 800 euros launched in 2022 or later.",
         """```sql
 SELECT
@@ -23,6 +44,7 @@ FROM Device d
 JOIN Device_Name dn ON dn.id = d.device_name_id
 JOIN Platform p    ON p.id  = d.platform_id
 WHERE dn.brand = 'Apple'
+  AND d.form_factor = 'phone'
   AND d.price_eur < 800
   AND d.year >= 2022
 ORDER BY d.price_eur ASC
