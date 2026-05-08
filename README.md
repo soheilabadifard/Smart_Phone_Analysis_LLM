@@ -22,6 +22,28 @@ The full proposal and E-R diagram are in `Project_Proposal.pdf`.
 4. **Analytics & Reporting.** Implement the SQL analyses behind the market-analytics use case and present results in dashboards/reports.
 5. **Natural-Language Interface.** Integrate an SLM/LLM that translates English questions into SQL and renders results for end users.
 
+## Running
+
+The platform runs as three local processes (LLM server, FastAPI backend,
+Vite frontend). See `RUNBOOK.md` for the full setup and startup order.
+
+## Tests
+
+```bash
+# Backend (from repo root)
+pip install -r backend/requirements.txt
+pytest -v
+
+# Frontend (from frontend/)
+npm install
+npm test
+```
+
+Backend tests use an in-memory SQLite engine and a stubbed LLM client — no
+MariaDB or `mlx_lm.server` required. Frontend tests run in jsdom with
+`react-plotly.js` mocked. CI runs both on every push to `main`
+(`.github/workflows/ci.yml`).
+
 ## Contributors
 
 - [Sanaz Gheibuni](https://github.com/sanaazz)
