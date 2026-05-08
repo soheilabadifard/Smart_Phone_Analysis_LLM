@@ -13,3 +13,10 @@ frontend/dist/
 frontend/.vite/
 
 backend/.venv/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+frontend/coverage/
