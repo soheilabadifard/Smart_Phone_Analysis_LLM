@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from app.db import ro_engine
 
@@ -84,8 +84,13 @@ def recommend(req: RecommendRequest) -> list[PhoneCard]:
         "year": "d.year",
     }[req.sort_by]
 
+    # Always exclude NULLs in the sort column — otherwise MariaDB sorts NULLs first
+    # ascending, which surfaces price-less / battery-less phones at the top of a
+    # default search.
+    where.append(f"{sort_col} IS NOT NULL")
+
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    sql = text(
+    stmt = text(
         f"""
         SELECT
             d.id AS device_id,
@@ -108,10 +113,12 @@ def recommend(req: RecommendRequest) -> list[PhoneCard]:
         LIMIT :lim
         """
     )
+    if req.brands:
+        stmt = stmt.bindparams(bindparam("brands", expanding=True))
     params["lim"] = req.limit
 
     with ro_engine().connect() as conn:
-        rows = conn.execute(sql, params).mappings().all()
+        rows = conn.execute(stmt, params).mappings().all()
     return [PhoneCard(**dict(r)) for r in rows]
 
 
