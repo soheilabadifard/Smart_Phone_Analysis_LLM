@@ -9,6 +9,7 @@ const samplePhone = {
   brand: 'Apple',
   model: 'iPhone 15',
   year: 2023,
+  form_factor: 'phone',
   price_eur: 799,
   ram_gb: 6,
   storage_gb: 128,
