@@ -33,3 +33,17 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 OpenAPI docs at <http://localhost:8000/docs>.
+
+## Tests
+
+The pytest suite lives at the repo root (`tests/`) and covers both the
+backend and the data pipeline. Run from the repo root:
+
+```bash
+pytest                     # all tests
+pytest tests/test_sql_guard.py -v
+pytest -m "not integration"  # skip integration markers
+```
+
+The suite uses an in-memory SQLite engine and monkeypatches the LLM call,
+so no MariaDB and no `mlx_lm.server` are needed to run it.
