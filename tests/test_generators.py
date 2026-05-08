@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy.dialects import mysql
 from sqlalchemy.schema import CreateTable
 
-from newDatabase import Base
+from etl.newDatabase import Base
 
 
 # ---------------------------------------------------------------------------
