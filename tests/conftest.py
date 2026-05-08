@@ -60,7 +60,7 @@ def sqlite_engine():
     from sqlalchemy import create_engine
     from sqlalchemy.pool import StaticPool
 
-    from newDatabase import Base
+    from etl.newDatabase import Base
 
     engine = create_engine(
         "sqlite:///:memory:",
