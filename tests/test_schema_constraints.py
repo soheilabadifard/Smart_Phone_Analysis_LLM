@@ -178,6 +178,19 @@ class TestCheckConstraints:
         with pytest.raises(IntegrityError):
             _exec(populated_engine, "UPDATE Sim SET sim_count = 'septuple' WHERE id = 1")
 
+    def test_form_factor_enum(self, populated_engine):
+        with pytest.raises(IntegrityError):
+            _exec(populated_engine, "UPDATE Device SET form_factor = 'spaceship' WHERE id = 1")
+
+    def test_form_factor_accepts_each_valid_value(self, populated_engine):
+        # All 5 enum values should be accepted on UPDATE.
+        for value in ("phone", "watch", "tablet", "band", "other"):
+            _exec(
+                populated_engine,
+                "UPDATE Device SET form_factor = :ff WHERE id = 1",
+                ff=value,
+            )
+
 
 # ---------------------------------------------------------------------------
 # NOT NULL
