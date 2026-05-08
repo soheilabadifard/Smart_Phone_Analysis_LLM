@@ -1,5 +1,11 @@
-processed_data.csv
 .env
+
+# Pipeline output (artifacts now live in etl/data/)
+etl/data/processed_data.csv
+etl/data/passed_link.csv
+# Per-brand interim files emitted by extract_phone_models()
+etl/data/*_models.json
+!etl/data/phone_models.json
 
 __pycache__/
 *.pyc
