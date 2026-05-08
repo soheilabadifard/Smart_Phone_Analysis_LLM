@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import text
 
-from newDatabase import (
+from etl.newDatabase import (
     AddToTable,
     attach_lookup_id,
     build_lookup_signature,
