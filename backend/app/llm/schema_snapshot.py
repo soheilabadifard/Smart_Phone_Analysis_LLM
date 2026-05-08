@@ -40,7 +40,8 @@ OS(id, os_name, os_version)
   - os_name examples: 'Android', 'iOS', 'HarmonyOS'
 
 Platform(id, chipset_manufacturer, cpu_core_count, internal_storage_gb, ram_gb)
-  - cpu_core_count is a string ('Octa-core', 'Hexa-core', etc.)
+  - cpu_core_count is an integer (typical values: 2, 4, 6, 8, 10).
+    Compare with numbers, not strings: WHERE p.cpu_core_count >= 8.
 
 Sim(id, sim_count, sim_type)
   - sim_count IN ('single','dual','triple','none')
