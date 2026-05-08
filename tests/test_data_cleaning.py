@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Data_cleaning import DataPreProcess
+from Data_cleaning import DataPreProcess, GBP_TO_EUR, INR_TO_EUR, USD_TO_EUR
 
 
 # ---------------------------------------------------------------------------
@@ -310,22 +310,18 @@ class TestCurrencyConversion:
 
     def test_usd_converted(self):
         out = self._run(["$ 999.00"])
-        # 999 * 0.93
-        assert out["Price_EUR"].iloc[0] == pytest.approx(999.0 * 0.93)
+        assert out["Price_EUR"].iloc[0] == pytest.approx(999.0 * USD_TO_EUR)
 
     def test_inr_converted(self):
         out = self._run(["₹ 12,499"])
-        assert out["Price_EUR"].iloc[0] == pytest.approx(12499 * 0.011)
+        assert out["Price_EUR"].iloc[0] == pytest.approx(12499 * INR_TO_EUR)
 
-    @pytest.mark.xfail(
-        reason="KNOWN BUG: GBP branch multiplies row['Price_INR'] instead of "
-               "row['Price_GBP']. Once Data_cleaning.py:430 is fixed, this "
-               "test should be flipped to pass.",
-        strict=True,
-    )
     def test_gbp_converted_correctly(self):
+        # Regression test for the GBP→EUR conversion bug fixed on 2026-05-08.
+        # Before: Data_cleaning.py:430 multiplied row['Price_INR'] (often None)
+        # by gbp_to_eur_rate, producing NaN for GBP-only-priced devices.
         out = self._run(["£ 849.00"])
-        assert out["Price_EUR"].iloc[0] == pytest.approx(849.0 * 1.17)
+        assert out["Price_EUR"].iloc[0] == pytest.approx(849.0 * GBP_TO_EUR)
 
     def test_unparseable_currency_uses_other(self):
         out = self._run(["1234.56"])
