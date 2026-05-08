@@ -91,3 +91,39 @@ class TestRecommendQuery:
     def test_invalid_sort_returns_422(self, client):
         r = client.post("/api/recommend", json={"sort_by": "haxor"})
         assert r.status_code == 422  # Pydantic Literal validation
+
+    def test_default_form_factor_excludes_non_phones(self, client):
+        # Seed has 5 phones (one with NULL price) + 1 watch. Default
+        # form_factor='phone' + NULL-price filter → 4 phone rows.
+        r = client.post(
+            "/api/recommend", json={"sort_by": "price", "sort_order": "asc"}
+        )
+        assert r.status_code == 200
+        rows = r.json()
+        # The watch (price 449) sits between id=3 (249) and id=1 (799). If
+        # the form_factor filter is broken, it would appear in the result.
+        prices = [row["price_eur"] for row in rows]
+        assert 449.0 not in prices
+
+    def test_form_factor_watch_returns_only_watches(self, client):
+        r = client.post("/api/recommend", json={"form_factor": "watch"})
+        assert r.status_code == 200
+        rows = r.json()
+        # Seed has exactly one watch (price 449)
+        assert len(rows) == 1
+        assert rows[0]["price_eur"] == 449.0
+
+    def test_form_factor_any_includes_watches_and_phones(self, client):
+        r = client.post(
+            "/api/recommend",
+            json={"form_factor": "any", "sort_by": "price", "sort_order": "asc"},
+        )
+        assert r.status_code == 200
+        rows = r.json()
+        # 4 phones with prices + 1 watch = 5 (id=4 still excluded for NULL price)
+        assert len(rows) == 5
+        assert 449.0 in [row["price_eur"] for row in rows]
+
+    def test_form_factor_invalid_returns_422(self, client):
+        r = client.post("/api/recommend", json={"form_factor": "spaceship"})
+        assert r.status_code == 422
