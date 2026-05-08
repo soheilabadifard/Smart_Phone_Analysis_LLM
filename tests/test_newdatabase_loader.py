@@ -24,6 +24,7 @@ from newDatabase import (
     AddToTable,
     attach_lookup_id,
     build_lookup_signature,
+    derive_form_factor,
     normalize_lookup_frame,
 )
 
@@ -79,6 +80,31 @@ class TestAttachLookupId:
         assert out["device_name_id"].iloc[0] == 10
 
 
+class TestDeriveFormFactor:
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("iPhone 15", "phone"),
+            ("Galaxy S24 Ultra", "phone"),
+            ("Apple Watch Edition 42mm (1st gen)", "watch"),
+            ("Galaxy Watch Active 2", "watch"),
+            ("Samsung Gear S3", "watch"),
+            ("iPad Pro 12.9 (2024)", "tablet"),
+            ("Galaxy Tab S9", "tablet"),
+            ("Huawei MatePad Pro", "tablet"),
+            ("Mi Band 7", "band"),
+            ("Smart Band X", "band"),
+            ("Fitbit Charge 5", "watch"),  # 'fitbit' is in WATCH_TOKENS by design
+        ],
+    )
+    def test_known_models(self, model, expected):
+        assert derive_form_factor(model) == expected
+
+    def test_nan_returns_other(self):
+        import pandas as pd
+        assert derive_form_factor(pd.NA) == "other"
+
+
 class TestBuildLookupSignature:
     def test_collision_free_for_distinct_rows(self):
         df = pd.DataFrame({
@@ -118,8 +144,12 @@ def synthetic_processed_df():
     Five rows: three valid devices across 2 brands + 1 row with NaN platform
     (should be dropped by addDevice) + 1 dup of the first row (should be
     deduped by build_device_records).
+
+    Note: when load_source_dataframe is bypassed (set ``_source_dataframe``
+    directly), the form_factor column must be present here — derivation only
+    runs as part of load_source_dataframe.
     """
-    return pd.DataFrame([
+    df = pd.DataFrame([
         # row 0: complete Apple iPhone 15 record
         {
             "brand": "Apple", "model": "iPhone 15",
@@ -217,6 +247,10 @@ def synthetic_processed_df():
             "sensor_payload": "['DIFFERENT', 'SENSORS']",
         },
     ])
+    # All synthetic rows are phones; load_source_dataframe is bypassed by these
+    # tests, so we add form_factor manually.
+    df["form_factor"] = df["model"].map(derive_form_factor)
+    return df
 
 
 class TestAppendNewRows:
