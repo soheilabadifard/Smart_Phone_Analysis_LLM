@@ -13,15 +13,16 @@ class UnsafeSQLError(ValueError):
     pass
 
 
-_DISALLOWED = (
-    exp.Insert,
-    exp.Update,
-    exp.Delete,
-    exp.Drop,
-    exp.Create,
-    exp.AlterTable,
-    exp.TruncateTable,
-    exp.Merge,
+# Look up disallowed classes by name with getattr so the guard tolerates
+# sqlglot API churn (e.g. AlterTable was renamed to Alter in 26.x).
+_DISALLOWED_NAMES = (
+    "Insert", "Update", "Delete", "Drop", "Create",
+    "Alter", "AlterTable",
+    "Truncate", "TruncateTable",
+    "Merge", "Replace",
+)
+_DISALLOWED: tuple[type, ...] = tuple(
+    getattr(exp, name) for name in _DISALLOWED_NAMES if hasattr(exp, name)
 )
 
 
@@ -43,7 +44,7 @@ def ensure_select_only(sql: str) -> str:
 
     for node in stmt.walk():
         n = node[0] if isinstance(node, tuple) else node
-        if isinstance(n, _DISALLOWED):
+        if _DISALLOWED and isinstance(n, _DISALLOWED):
             raise UnsafeSQLError(f"Disallowed clause: {type(n).__name__}.")
 
     return stmt.sql(dialect="mysql")
