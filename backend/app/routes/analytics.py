@@ -119,6 +119,52 @@ def _anova_table(model_formula: str, data: pd.DataFrame) -> list[dict]:
     return out
 
 
+def _ols_summary(model_formula: str, data: pd.DataFrame) -> dict:
+    """Fit OLS and return coefficient table + overall fit stats.
+
+    Output shape:
+      {
+        "n": int, "r_squared": float, "adj_r_squared": float,
+        "f_statistic": float, "f_p_value": float,
+        "coefficients": [
+          {"name": "battery_mah", "coef": ..., "std_err": ..., "t": ..., "p_value": ...},
+          ...
+        ],
+      }
+
+    Returns a dict with `error` if the design is degenerate.
+    """
+    try:
+        model = ols(model_formula, data=data).fit()
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        return {"error": str(exc), "n": int(len(data))}
+
+    def _safe(value: Any) -> float | None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        return None if (np.isnan(v) or np.isinf(v)) else v
+
+    coefs = []
+    for name in model.params.index:
+        coefs.append({
+            "name": str(name),
+            "coef": _safe(model.params[name]),
+            "std_err": _safe(model.bse[name]),
+            "t": _safe(model.tvalues[name]),
+            "p_value": _safe(model.pvalues[name]),
+        })
+    return {
+        "n": int(model.nobs),
+        "r_squared": _safe(model.rsquared),
+        "adj_r_squared": _safe(model.rsquared_adj),
+        "f_statistic": _safe(model.fvalue),
+        "f_p_value": _safe(model.f_pvalue),
+        "coefficients": coefs,
+    }
+
+
 # ===========================================================================
 # Section 1 — R-style summary endpoints
 # ===========================================================================
@@ -593,3 +639,149 @@ def ht_weight_by_size() -> dict:
             {"size": "large", **_group_summary(large)},
         ],
     )
+
+
+# --- One-way ANOVAs (notebook cells 76, 78, 80) ---
+
+
+@router.get("/ht-battery-by-cpu")
+def ht_battery_by_cpu() -> dict:
+    """One-way ANOVA: battery_capacity_mah ~ cpu_core_count."""
+    df = _df(
+        f"""
+        SELECT d.battery_capacity_mah AS battery, p.cpu_core_count
+        FROM Device d
+        JOIN Platform p ON p.id = d.platform_id
+        WHERE {_PHONE} AND d.battery_capacity_mah IS NOT NULL
+          AND p.cpu_core_count IS NOT NULL
+        """
+    ).dropna()
+    anova = _anova_table('battery ~ C(cpu_core_count)', df)
+    main = next((row for row in anova if 'cpu_core_count' in row['factor']), None)
+    groups = [
+        {"cpu_core_count": int(g), **_group_summary(sub['battery'].to_numpy())}
+        for g, sub in df.groupby('cpu_core_count')
+    ]
+    return _ht_response(
+        name="Battery capacity differs by CPU core count?",
+        description="One-way ANOVA on battery_capacity_mah grouped by CPU core count.",
+        test_block={"test": "one-way ANOVA", "anova": anova,
+                    "p_value": main["p_value"] if main else None},
+        groups=groups,
+    )
+
+
+@router.get("/ht-price-by-chipset")
+def ht_price_by_chipset() -> dict:
+    """One-way ANOVA: price ~ chipset_manufacturer."""
+    df = _df(
+        f"""
+        SELECT d.price_eur AS price, p.chipset_manufacturer
+        FROM Device d
+        JOIN Platform p ON p.id = d.platform_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+          AND p.chipset_manufacturer IS NOT NULL
+        """
+    ).dropna()
+    anova = _anova_table('price ~ C(chipset_manufacturer)', df)
+    main = next((row for row in anova if 'chipset_manufacturer' in row['factor']), None)
+    groups = [
+        {"chipset_manufacturer": str(g), **_group_summary(sub['price'].to_numpy())}
+        for g, sub in df.groupby('chipset_manufacturer')
+    ]
+    return _ht_response(
+        name="Price differs by chipset manufacturer?",
+        description="One-way ANOVA on price grouped by chipset manufacturer (Qualcomm / Mediatek / Apple / Exynos / …).",
+        test_block={"test": "one-way ANOVA", "anova": anova,
+                    "p_value": main["p_value"] if main else None},
+        groups=groups,
+    )
+
+
+@router.get("/ht-price-by-main-camera")
+def ht_price_by_main_camera() -> dict:
+    """One-way ANOVA: price ~ main_cameras_num."""
+    df = _df(
+        f"""
+        SELECT d.price_eur AS price, c.main_cameras_num
+        FROM Device d
+        JOIN Camera c ON c.id = d.camera_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+          AND c.main_cameras_num IS NOT NULL
+        """
+    ).dropna()
+    anova = _anova_table('price ~ C(main_cameras_num)', df)
+    main = next((row for row in anova if 'main_cameras_num' in row['factor']), None)
+    groups = [
+        {"main_cameras_num": int(g), **_group_summary(sub['price'].to_numpy())}
+        for g, sub in df.groupby('main_cameras_num')
+    ]
+    return _ht_response(
+        name="Price differs by main-camera count?",
+        description="One-way ANOVA on price grouped by the number of rear cameras.",
+        test_block={"test": "one-way ANOVA", "anova": anova,
+                    "p_value": main["p_value"] if main else None},
+        groups=groups,
+    )
+
+
+# ===========================================================================
+# Section 4 — OLS regression models (notebook cells 18, 74)
+# ===========================================================================
+
+
+@router.get("/price-regression-specs")
+def price_regression_specs() -> dict:
+    """OLS: price ~ battery + weight + display_size + resolution_pixels +
+    screen_to_body_ratio + ppi_density. Mirrors notebook cell 74."""
+    df = _df(
+        f"""
+        SELECT d.price_eur AS price,
+               d.battery_capacity_mah AS battery_mah,
+               d.weight,
+               disp.display_size_inch,
+               disp.resolution_pixels,
+               disp.screen_to_body_ratio,
+               disp.ppi_density
+        FROM Device d
+        JOIN Display disp ON disp.id = d.display_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        """
+    ).dropna()
+    summary = _ols_summary(
+        'price ~ battery_mah + weight + display_size_inch + resolution_pixels '
+        '+ screen_to_body_ratio + ppi_density',
+        df,
+    )
+    return {
+        "name": "Price ~ physical specs (multivariate OLS)",
+        "description": (
+            "Predict price (€) from six numeric specs. "
+            "Each row in `coefficients` shows the partial slope and its p-value; "
+            "R² is the share of price variance the model explains."
+        ),
+        **summary,
+    }
+
+
+@router.get("/price-regression-os")
+def price_regression_os() -> dict:
+    """OLS: price ~ OS dummies (one-hot, drop-first). Mirrors notebook cell 18."""
+    df = _df(
+        f"""
+        SELECT d.price_eur AS price, o.os_name
+        FROM Device d
+        JOIN OS o ON o.id = d.os_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL AND o.os_name IS NOT NULL
+        """
+    ).dropna()
+    summary = _ols_summary('price ~ C(os_name)', df)
+    return {
+        "name": "Price ~ OS (categorical OLS)",
+        "description": (
+            "Per-OS price intercept relative to the reference OS (alphabetically first, "
+            "typically 'Android'). A positive coefficient means devices on that OS cost "
+            "more than the reference, holding nothing else equal."
+        ),
+        **summary,
+    }
