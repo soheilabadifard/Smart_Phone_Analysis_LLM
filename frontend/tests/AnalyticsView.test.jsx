@@ -126,6 +126,60 @@ const RESPONSES = {
       { name: 'C(os_name)[T.iOS]', coef: 700.0, std_err: 25.0, t: 28.0, p_value: 0 },
     ],
   },
+  'price-regression-full': {
+    name: 'Price ~ all predictors (full OLS)',
+    description: 'Brand + chipset + year + RAM + storage + specs',
+    n: 5846, r_squared: 0.537, adj_r_squared: 0.535,
+    f_statistic: 241.3, f_p_value: 0,
+    coefficients: [
+      { name: 'Intercept', coef: 21647.2, std_err: 2700, t: 8.0, p_value: 4.6e-15 },
+      { name: 'C(brand)[T.Xiaomi]', coef: -99.93, std_err: 12.0, t: -8.3, p_value: 0 },
+      { name: 'ram_gb', coef: 27.57, std_err: 1.5, t: 18.0, p_value: 0 },
+      { name: 'storage_gb', coef: 0.311, std_err: 0.02, t: 15.0, p_value: 0 },
+      { name: 'year', coef: -12.59, std_err: 1.3, t: -9.7, p_value: 0 },
+    ],
+  },
+  'price-residuals': {
+    model: 'full',
+    formula: 'price ~ ...',
+    n: 5837, r_squared: 0.537, adj_r_squared: 0.535,
+    mean_residual: 0, std_residual: 280,
+    sample_residuals: [
+      { fitted: 100, residual: 50, standardized: 0.18 },
+      { fitted: 500, residual: -120, standardized: -0.43 },
+    ],
+    qq_plot: [
+      { theoretical: -3, sample: -2.8 },
+      { theoretical: 0, sample: 0.1 },
+      { theoretical: 3, sample: 4.2 },
+    ],
+    breusch_pagan: { lm: 600, p_value: 5.9e-115, f: 25, f_p_value: 0 },
+    jarque_bera: { statistic: 5e6, p_value: 0, skew: 3.27, kurtosis: 30.37 },
+    vif: [
+      { predictor: 'display_size_inch', vif: 10.4 },
+      { predictor: 'ram_gb', vif: 2.1 },
+    ],
+    top_cooks_d: [{ index: 12, cooks_d: 0.05, fitted: 1500, residual: 800 }],
+    n_outliers_z3: 95,
+  },
+  'price-feature-selection': {
+    history: [
+      { step: 1, added: 'ram_gb', formula: 'price ~ ram_gb',
+        adj_r_squared: 0.346, r_squared: 0.347, aic: 80454, bic: 80468, n_predictors: 1 },
+      { step: 2, added: 'C(brand)', formula: 'price ~ ram_gb + C(brand)',
+        adj_r_squared: 0.440, r_squared: 0.442, aic: 79565, bic: 79685, n_predictors: 17 },
+    ],
+    final_features: ['ram_gb', 'C(brand)'],
+    final_formula: 'price ~ ram_gb + C(brand)',
+    final_summary: {
+      n: 5837, r_squared: 0.442, adj_r_squared: 0.440,
+      f_statistic: 200, f_p_value: 0,
+      coefficients: [
+        { name: 'Intercept', coef: 100, std_err: 10, t: 10, p_value: 0 },
+        { name: 'ram_gb', coef: 28, std_err: 1, t: 28, p_value: 0 },
+      ],
+    },
+  },
 }
 
 function payloadFor(url) {
@@ -182,6 +236,19 @@ describe('AnalyticsView', () => {
     expect(screen.getByText(/Regression models/i)).toBeInTheDocument()
     expect(screen.getByText(/Price ~ physical specs/i)).toBeInTheDocument()
     expect(screen.getByText(/Price ~ OS/i)).toBeInTheDocument()
+    expect(screen.getByText(/Price ~ all predictors/i)).toBeInTheDocument()
+
+    // Section 5
+    expect(screen.getByText(/Diagnostics and feature selection/i)).toBeInTheDocument()
+    expect(screen.getByText(/Residual diagnostics/i)).toBeInTheDocument()
+    expect(screen.getByText(/Forward stepwise feature selection/i)).toBeInTheDocument()
+  })
+
+  it('renders feature-selection history with the seeded steps', async () => {
+    render(<AnalyticsView />)
+    await waitFor(() => screen.getByText(/Forward stepwise feature selection/i))
+    // First step in mock is `ram_gb`
+    expect(screen.getAllByText(/ram_gb/i).length).toBeGreaterThan(0)
   })
 
   it('renders OLS regression tables with R² and coefficient rows', async () => {
