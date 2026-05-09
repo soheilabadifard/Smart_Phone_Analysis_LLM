@@ -59,6 +59,52 @@ class TestRecommendQuery:
         rows = r.json()
         assert all(row["ram_gb"] >= 12 for row in rows)
 
+    def test_os_name_filter(self, client):
+        r = client.post("/api/recommend", json={"os_name": "iOS"})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["os"] == "iOS" for row in rows)
+
+    def test_min_storage_filter(self, client):
+        r = client.post("/api/recommend", json={"min_storage_gb": 256})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["storage_gb"] >= 256 for row in rows)
+
+    def test_min_battery_filter(self, client):
+        r = client.post("/api/recommend", json={"min_battery_mah": 4000})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["battery_mah"] >= 4000 for row in rows)
+
+    def test_min_display_filter(self, client):
+        r = client.post("/api/recommend", json={"min_display_inch": 6.5})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["display_inch"] >= 6.5 for row in rows)
+
+    def test_max_display_filter(self, client):
+        r = client.post("/api/recommend", json={"max_display_inch": 6.2})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["display_inch"] <= 6.2 for row in rows)
+
+    def test_combined_filters(self, client):
+        """Stack multiple filters — covers the full WHERE-clause builder."""
+        r = client.post("/api/recommend", json={
+            "max_price_eur": 1000,
+            "min_ram_gb": 6,
+            "min_battery_mah": 3000,
+            "form_factor": "phone",
+        })
+        assert r.status_code == 200
+        rows = r.json()
+        for row in rows:
+            assert row["price_eur"] <= 1000
+            assert row["ram_gb"] >= 6
+            assert row["battery_mah"] >= 3000
+            assert row["form_factor"] == "phone"
+
     def test_5g_filter(self, client):
         r = client.post("/api/recommend", json={"require_5g": True})
         assert r.status_code == 200
