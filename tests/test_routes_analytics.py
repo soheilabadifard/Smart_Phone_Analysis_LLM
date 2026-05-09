@@ -6,6 +6,8 @@ HTTP shape and that the result has the expected aggregation columns.
 
 from __future__ import annotations
 
+import pytest
+
 
 class TestBrandSummary:
     def test_returns_list_of_dicts(self, client):
@@ -319,3 +321,83 @@ class TestOlsRegressions:
         r = client.get("/api/analytics/price-regression-os")
         assert r.status_code == 200
         self._assert_ols_envelope(r.json())
+
+    def test_price_regression_full(self, client):
+        r = client.get("/api/analytics/price-regression-full")
+        assert r.status_code == 200
+        self._assert_ols_envelope(r.json())
+
+
+class TestResidualDiagnostics:
+    """Residual diagnostics for the OLS price models."""
+
+    @pytest.fixture
+    def body(self, client):
+        r = client.get("/api/analytics/price-residuals?model=full")
+        assert r.status_code == 200
+        return r.json()
+
+    def test_envelope_shape(self, body):
+        if "error" in body:
+            pytest.skip("seed too small to fit model")
+        assert {"n", "sample_residuals", "qq_plot", "breusch_pagan",
+                "jarque_bera", "vif", "top_cooks_d", "n_outliers_z3"} <= set(body)
+
+    def test_p_values_in_range(self, body):
+        if "error" in body:
+            pytest.skip("seed too small to fit model")
+        for block_key in ("breusch_pagan", "jarque_bera"):
+            block = body.get(block_key, {})
+            for k, v in block.items():
+                if k.endswith("p_value") and v is not None:
+                    assert 0.0 <= v <= 1.0, f"{block_key}.{k} out of range"
+
+    def test_vif_values(self, body):
+        if "error" in body:
+            pytest.skip("seed too small to fit model")
+        for entry in body["vif"]:
+            assert "predictor" in entry and "vif" in entry
+            if entry["vif"] is not None:
+                assert entry["vif"] >= 0.99  # VIF >= 1 by definition (slack for fp)
+
+    def test_specs_variant(self, client):
+        r = client.get("/api/analytics/price-residuals?model=specs")
+        assert r.status_code == 200
+        body = r.json()
+        if "error" not in body:
+            assert body["model"] == "specs"
+
+    def test_unknown_model(self, client):
+        r = client.get("/api/analytics/price-residuals?model=garbage")
+        assert r.status_code == 200
+        assert "error" in r.json()
+
+
+class TestFeatureSelection:
+    def test_returns_history(self, client):
+        r = client.get("/api/analytics/price-feature-selection")
+        assert r.status_code == 200
+        body = r.json()
+        if "error" in body and not body.get("history"):
+            pytest.skip("seed too small for stepwise selection")
+        assert isinstance(body["history"], list)
+        for step in body["history"]:
+            assert {"step", "added", "formula", "adj_r_squared",
+                    "r_squared", "aic", "bic"} <= set(step)
+
+    def test_history_monotone_in_adj_r_squared(self, client):
+        body = client.get("/api/analytics/price-feature-selection").json()
+        history = body.get("history", [])
+        if len(history) < 2:
+            pytest.skip("seed too small for stepwise selection")
+        # Forward stepwise on adj R² → strictly non-decreasing path.
+        for prev, curr in zip(history, history[1:]):
+            assert curr["adj_r_squared"] >= prev["adj_r_squared"] - 1e-9
+
+    def test_final_summary_present_when_history_nonempty(self, client):
+        body = client.get("/api/analytics/price-feature-selection").json()
+        if not body.get("history"):
+            pytest.skip("no model selected — seed too small")
+        assert "final_features" in body and "final_summary" in body
+        assert isinstance(body["final_features"], list)
+        assert "coefficients" in body["final_summary"]
