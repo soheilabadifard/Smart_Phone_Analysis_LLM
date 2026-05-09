@@ -28,6 +28,15 @@ class TestAnnualLaunches:
         # Must be ascending and unique
         assert years == sorted(set(years))
 
+    def test_left_join_counts_null_platform_devices(self, client):
+        """The 2024 row must include id=7 (NULL platform_id) because the route
+        LEFT-joins to Platform. Under old INNER JOIN id=7 would be filtered out."""
+        rows = client.get("/api/analytics/annual-launches").json()
+        year_2024 = next((row for row in rows if row["year"] == 2024), None)
+        assert year_2024 is not None
+        # Seed: id=2,3,5 (phones) + id=6 (watch) + id=7 (NULL platform) = 5 launches in 2024
+        assert year_2024["launches"] == 5
+
 
 class TestChipsetPopularity:
     def test_returns_chipset_rows(self, client):
