@@ -93,8 +93,8 @@ class TestRecommendQuery:
         assert r.status_code == 422  # Pydantic Literal validation
 
     def test_default_form_factor_excludes_non_phones(self, client):
-        # Seed has 5 phones (one with NULL price) + 1 watch. Default
-        # form_factor='phone' + NULL-price filter → 4 phone rows.
+        # Seed has 6 phones (id=4 NULL price, id=7 NULL platform) + 1 watch.
+        # Default form_factor='phone' + NULL-price filter → 5 phone rows.
         r = client.post(
             "/api/recommend", json={"sort_by": "price", "sort_order": "asc"}
         )
@@ -120,9 +120,30 @@ class TestRecommendQuery:
         )
         assert r.status_code == 200
         rows = r.json()
-        # 4 phones with prices + 1 watch = 5 (id=4 still excluded for NULL price)
-        assert len(rows) == 5
+        # 5 phones with prices + 1 watch = 6 (id=4 still excluded for NULL price;
+        # id=7 has NULL platform but a valid price, so it appears)
+        assert len(rows) == 6
         assert 449.0 in [row["price_eur"] for row in rows]
+
+    def test_null_platform_device_appears_unfiltered(self, client):
+        """id=7 has platform_id=NULL. The recommend route LEFT-joins to Platform
+        so the row appears with chipset/ram/storage as None when no platform
+        filter is set."""
+        r = client.post("/api/recommend", json={"max_price_eur": 200})
+        assert r.status_code == 200
+        rows = r.json()
+        match = [row for row in rows if row["device_id"] == 7]
+        assert len(match) == 1, "id=7 should appear in unfiltered results"
+        assert match[0]["chipset"] is None
+        assert match[0]["ram_gb"] is None
+        assert match[0]["storage_gb"] is None
+
+    def test_null_platform_device_excluded_by_ram_filter(self, client):
+        """min_ram_gb=4 must exclude id=7 (NULL ram won't satisfy >= 4)."""
+        r = client.post("/api/recommend", json={"min_ram_gb": 4})
+        assert r.status_code == 200
+        rows = r.json()
+        assert all(row["device_id"] != 7 for row in rows)
 
     def test_form_factor_invalid_returns_422(self, client):
         r = client.post("/api/recommend", json={"form_factor": "spaceship"})
