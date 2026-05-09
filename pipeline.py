@@ -27,7 +27,7 @@ from pathlib import Path
 # (step_name, script_or_callable, [expected_output_files])
 # Scripts live in etl/; intermediate artifacts land in etl/data/.
 STEPS = [
-    ("crawl",     "etl/crawl.py",                ["etl/data/phone_info.json", "etl/data/phone_models_old.json", "etl/data/brand_links.json"]),
+    ("crawl",     "etl/crawl.py",                ["etl/data/phone_info.json", "etl/data/phone_models.json", "etl/data/brand_links.json"]),
     ("flatten",   "etl/JsonToDataframe.py",      ["etl/data/flattened_data.csv"]),
     ("price",     "etl/extracrawling.py",        ["etl/data/pricing.json"]),
     ("price-csv", "etl/pricing_json_to_csv.py",  ["etl/data/pricing.csv"]),
