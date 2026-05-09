@@ -6,6 +6,9 @@ python-dotenv>=1.0.1
 pydantic>=2.10
 openai>=1.60
 sqlglot>=26.0
+numpy>=1.26
+scipy>=1.11        # hypothesis tests (t-test, Mann-Whitney U, Shapiro-Wilk)
+statsmodels>=0.14  # ANOVA via OLS + sm.stats.anova_lm
 
 # Test deps (also covers the root-level tests/ suite)
 pytest>=8.3
