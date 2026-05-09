@@ -260,8 +260,62 @@ class TestHypothesisTests:
             "/api/analytics/ht-battery-by-brand-and-size",
             "/api/analytics/ht-price-by-brand-and-size",
             "/api/analytics/ht-weight-by-size",
+            "/api/analytics/ht-battery-by-cpu",
+            "/api/analytics/ht-price-by-chipset",
+            "/api/analytics/ht-price-by-main-camera",
         ]
         for url in urls:
             body = client.get(url).json()
             p = body.get("p_value")
             assert p is None or (0.0 <= p <= 1.0), f"{url}: p_value out of range"
+
+
+class TestOneWayAnovas:
+    """Notebook cells 76, 78, 80 — three additional one-way ANOVAs."""
+
+    def test_ht_battery_by_cpu(self, client):
+        r = client.get("/api/analytics/ht-battery-by-cpu")
+        assert r.status_code == 200
+        body = r.json()
+        _assert_ht_envelope(body)
+        assert body["test"] == "one-way ANOVA"
+
+    def test_ht_price_by_chipset(self, client):
+        r = client.get("/api/analytics/ht-price-by-chipset")
+        assert r.status_code == 200
+        body = r.json()
+        _assert_ht_envelope(body)
+        assert body["test"] == "one-way ANOVA"
+
+    def test_ht_price_by_main_camera(self, client):
+        r = client.get("/api/analytics/ht-price-by-main-camera")
+        assert r.status_code == 200
+        body = r.json()
+        _assert_ht_envelope(body)
+        assert body["test"] == "one-way ANOVA"
+
+
+class TestOlsRegressions:
+    """Notebook cells 18, 74 — multivariate / categorical OLS."""
+
+    def _assert_ols_envelope(self, body):
+        assert {"name", "description", "n", "r_squared", "coefficients"} <= set(body) or "error" in body
+        if "error" in body:
+            return  # degenerate seed — that's a valid response
+        assert isinstance(body["coefficients"], list)
+        if body["r_squared"] is not None:
+            assert -0.01 <= body["r_squared"] <= 1.0
+        for coef in body["coefficients"]:
+            assert {"name", "coef", "std_err", "t", "p_value"} <= set(coef)
+            if coef["p_value"] is not None:
+                assert 0.0 <= coef["p_value"] <= 1.0
+
+    def test_price_regression_specs(self, client):
+        r = client.get("/api/analytics/price-regression-specs")
+        assert r.status_code == 200
+        self._assert_ols_envelope(r.json())
+
+    def test_price_regression_os(self, client):
+        r = client.get("/api/analytics/price-regression-os")
+        assert r.status_code == 200
+        self._assert_ols_envelope(r.json())
