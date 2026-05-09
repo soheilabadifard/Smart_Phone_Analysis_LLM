@@ -161,6 +161,14 @@ def populated_engine(sqlite_engine, monkeypatch):
              "weight": 38.0, "length": 44.0, "width": 38.0, "height": 10.7,
              "volume": 17880.0, "os_id": 1, "platform_id": 1, "price_eur": 449.0,
              "sim_id": 2, "form_factor": "watch"},
+            # id=7: a phone with NULL platform_id — exercises the nullable-FK path
+            # so route tests catch regressions if recommend reverts to INNER JOIN.
+            {"id": 7, "device_key": "k7_no_platform", "device_name_id": 3,
+             "network_technology_id": 1, "year": 2024, "launch_status": "Available",
+             "battery_capacity_mah": 4500, "camera_id": 2, "display_id": 2,
+             "weight": 180.0, "length": 160.0, "width": 75.0, "height": 8.2,
+             "volume": 98400.0, "os_id": 2, "platform_id": None, "price_eur": 199.0,
+             "sim_id": 1, "form_factor": "phone"},
         ],
     }
 
