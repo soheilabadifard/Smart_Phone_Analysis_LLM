@@ -119,6 +119,157 @@ def _anova_table(model_formula: str, data: pd.DataFrame) -> list[dict]:
     return out
 
 
+def _residual_diagnostics(model, max_points: int = 500) -> dict:
+    """Compute the standard OLS residual-diagnostic suite for a fitted model.
+
+    Returns fitted/residual sample for scatter plot, QQ-plot data, formal
+    tests for heteroscedasticity (Breusch-Pagan) and normality (Jarque-Bera),
+    VIF per predictor, top influential observations by Cook's distance, and
+    the count of large standardized residuals.
+    """
+    from statsmodels.stats.diagnostic import het_breuschpagan
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    from statsmodels.stats.stattools import jarque_bera
+
+    fitted = model.fittedvalues.to_numpy()
+    resid = model.resid.to_numpy()
+    std_resid = (resid - resid.mean()) / resid.std() if resid.std() > 0 else np.zeros_like(resid)
+    n = len(resid)
+
+    rng = np.random.default_rng(0)
+    sample_idx = rng.choice(n, min(max_points, n), replace=False)
+    sample = [
+        {"fitted": float(fitted[i]), "residual": float(resid[i]),
+         "standardized": float(std_resid[i])}
+        for i in sample_idx
+    ]
+
+    # QQ data: sort standardized residuals against theoretical normal quantiles.
+    order = np.argsort(std_resid)
+    theoretical = stats.norm.ppf((np.arange(n) + 0.5) / n)
+    qq_step = max(1, n // max_points)
+    qq = [
+        {"theoretical": float(theoretical[i]), "sample": float(std_resid[order[i]])}
+        for i in range(0, n, qq_step)
+    ]
+
+    # Heteroscedasticity (Breusch-Pagan).
+    try:
+        bp_lm, bp_lm_p, bp_f, bp_f_p = het_breuschpagan(resid, model.model.exog)
+        breusch_pagan = {"lm": float(bp_lm), "p_value": float(bp_lm_p),
+                         "f": float(bp_f), "f_p_value": float(bp_f_p)}
+    except (ValueError, np.linalg.LinAlgError):
+        breusch_pagan = {"lm": None, "p_value": None, "f": None, "f_p_value": None}
+
+    # Normality (Jarque-Bera).
+    try:
+        jb, jb_p, skew_v, kurt_v = jarque_bera(resid)
+        jarque_bera_block = {"statistic": float(jb), "p_value": float(jb_p),
+                             "skew": float(skew_v), "kurtosis": float(kurt_v)}
+    except (ValueError, np.linalg.LinAlgError):
+        jarque_bera_block = {"statistic": None, "p_value": None,
+                             "skew": None, "kurtosis": None}
+
+    # VIF per predictor (skip Intercept).
+    vif_rows: list[dict] = []
+    exog = model.model.exog
+    for i, name in enumerate(model.model.exog_names):
+        if name == "Intercept":
+            continue
+        try:
+            v = variance_inflation_factor(exog, i)
+            v = None if (np.isnan(v) or np.isinf(v)) else float(v)
+        except (ValueError, np.linalg.LinAlgError, ZeroDivisionError):
+            v = None
+        vif_rows.append({"predictor": str(name), "vif": v})
+
+    # Cook's distance: top-10 most influential observations.
+    try:
+        influence = model.get_influence()
+        cooks_d = influence.cooks_distance[0]
+        top_idx = np.argsort(cooks_d)[-10:][::-1]
+        top_cooks = [
+            {"index": int(i), "cooks_d": float(cooks_d[i]),
+             "fitted": float(fitted[i]), "residual": float(resid[i])}
+            for i in top_idx
+        ]
+    except (ValueError, np.linalg.LinAlgError, AttributeError):
+        top_cooks = []
+
+    return {
+        "n": int(n),
+        "mean_residual": float(np.mean(resid)),
+        "std_residual": float(np.std(resid, ddof=1)) if n > 1 else None,
+        "sample_residuals": sample,
+        "qq_plot": qq,
+        "breusch_pagan": breusch_pagan,
+        "jarque_bera": jarque_bera_block,
+        "vif": vif_rows,
+        "top_cooks_d": top_cooks,
+        "n_outliers_z3": int(np.sum(np.abs(std_resid) > 3)),
+    }
+
+
+def _forward_stepwise(data: pd.DataFrame, response: str,
+                      candidates: list[str]) -> dict:
+    """Forward stepwise selection by adjusted R².
+
+    At each step, fit `response ~ <selected> + <candidate>` for every
+    remaining candidate and keep the one giving the highest adjusted R².
+    Stop when no addition improves adj R². Returns the step-by-step path
+    and a summary of the final (best) model.
+    """
+    selected: list[str] = []
+    history: list[dict] = []
+    best_adj_r2 = -float("inf")
+    best_model = None
+
+    while True:
+        best_step = None
+        best_step_score = best_adj_r2
+        best_step_model = None
+        for feat in candidates:
+            if feat in selected:
+                continue
+            terms = selected + [feat]
+            formula = f"{response} ~ " + " + ".join(terms)
+            try:
+                m = ols(formula, data=data).fit()
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+            if m.rsquared_adj > best_step_score:
+                best_step_score = m.rsquared_adj
+                best_step = feat
+                best_step_model = m
+        if best_step is None:
+            break
+        selected.append(best_step)
+        best_adj_r2 = best_step_score
+        best_model = best_step_model
+        history.append({
+            "step": len(selected),
+            "added": best_step,
+            "formula": f"{response} ~ " + " + ".join(selected),
+            "adj_r_squared": float(best_step_model.rsquared_adj),
+            "r_squared": float(best_step_model.rsquared),
+            "aic": float(best_step_model.aic),
+            "bic": float(best_step_model.bic),
+            "n_predictors": int(best_step_model.df_model),
+        })
+
+    if best_model is None:
+        return {"error": "no candidate could improve adjusted R²",
+                "history": [], "final_summary": None}
+
+    final_formula = f"{response} ~ " + " + ".join(selected)
+    return {
+        "history": history,
+        "final_features": selected,
+        "final_formula": final_formula,
+        "final_summary": _ols_summary(final_formula, data),
+    }
+
+
 def _ols_summary(model_formula: str, data: pd.DataFrame) -> dict:
     """Fit OLS and return coefficient table + overall fit stats.
 
@@ -782,6 +933,137 @@ def price_regression_os() -> dict:
             "Per-OS price intercept relative to the reference OS (alphabetically first, "
             "typically 'Android'). A positive coefficient means devices on that OS cost "
             "more than the reference, holding nothing else equal."
+        ),
+        **summary,
+    }
+
+
+def _full_model_data() -> pd.DataFrame:
+    """Pull the catalogue with every candidate predictor present.
+
+    Shared by `/price-regression-full`, `/price-residuals`, and
+    `/price-feature-selection` so they all fit on the same row set.
+    """
+    return _df(
+        f"""
+        SELECT d.price_eur AS price,
+               d.battery_capacity_mah AS battery_mah,
+               d.weight, d.year,
+               dn.brand,
+               disp.display_size_inch,
+               disp.resolution_pixels,
+               disp.screen_to_body_ratio,
+               disp.ppi_density,
+               p.chipset_manufacturer,
+               p.ram_gb,
+               p.internal_storage_gb AS storage_gb,
+               o.os_name
+        FROM Device d
+        JOIN Device_Name dn ON dn.id = d.device_name_id
+        JOIN Display disp ON disp.id = d.display_id
+        JOIN Platform p ON p.id = d.platform_id
+        JOIN OS o ON o.id = d.os_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        """
+    ).dropna()
+
+
+_RESIDUAL_FORMULAS = {
+    "specs": (
+        "price ~ battery_mah + weight + display_size_inch + resolution_pixels "
+        "+ screen_to_body_ratio + ppi_density"
+    ),
+    "full": (
+        "price ~ battery_mah + weight + display_size_inch + resolution_pixels "
+        "+ screen_to_body_ratio + ram_gb + storage_gb + year "
+        "+ C(brand) + C(chipset_manufacturer)"
+    ),
+}
+
+
+@router.get("/price-residuals")
+def price_residuals(model: str = "full") -> dict:
+    """Residual diagnostics for the OLS price model.
+
+    Pass `model=specs` to inspect the simpler 6-numeric model, or `model=full`
+    for the brand+chipset+year-augmented one. Returns sample fitted/residual
+    pairs, QQ-plot data, Breusch-Pagan, Jarque-Bera, VIF, Cook's distance
+    top-10, and outlier counts.
+    """
+    if model not in _RESIDUAL_FORMULAS:
+        return {"error": f"unknown model '{model}'; expected one of {list(_RESIDUAL_FORMULAS)}"}
+    df = _full_model_data()
+    formula = _RESIDUAL_FORMULAS[model]
+    try:
+        fit = ols(formula, data=df).fit()
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        return {"error": str(exc), "model": model}
+    diagnostics = _residual_diagnostics(fit)
+    return {"model": model, "formula": formula, "r_squared": float(fit.rsquared),
+            "adj_r_squared": float(fit.rsquared_adj), **diagnostics}
+
+
+@router.get("/price-feature-selection")
+def price_feature_selection() -> dict:
+    """Forward stepwise selection over numeric and categorical predictors.
+
+    Candidates: 9 numerics (battery, weight, display_size, resolution_pixels,
+    screen_to_body_ratio, ppi_density, ram_gb, storage_gb, year) plus three
+    categoricals (brand, chipset_manufacturer, os_name). The procedure adds
+    the feature that maximises adjusted R² at each step and stops when no
+    candidate improves it. Returns the path plus the final model's
+    coefficients.
+    """
+    df = _full_model_data()
+    candidates = [
+        "battery_mah", "weight", "display_size_inch", "resolution_pixels",
+        "screen_to_body_ratio", "ppi_density", "ram_gb", "storage_gb", "year",
+        "C(brand)", "C(chipset_manufacturer)", "C(os_name)",
+    ]
+    return _forward_stepwise(df, "price", candidates)
+
+
+@router.get("/price-regression-full")
+def price_regression_full() -> dict:
+    """OLS with brand, chipset, year, RAM, storage + physical specs.
+
+    The simpler `/price-regression-specs` model (R² ≈ 0.41) suffers from
+    omitted-variable bias because brand / year / chipset are huge price
+    drivers it cannot see. This endpoint adds them. `ppi_density` is
+    intentionally dropped (perfectly collinear with resolution + size).
+    """
+    df = _df(
+        f"""
+        SELECT d.price_eur AS price,
+               d.battery_capacity_mah AS battery_mah,
+               d.weight, d.year,
+               dn.brand,
+               disp.display_size_inch,
+               disp.resolution_pixels,
+               disp.screen_to_body_ratio,
+               p.chipset_manufacturer,
+               p.ram_gb,
+               p.internal_storage_gb AS storage_gb
+        FROM Device d
+        JOIN Device_Name dn ON dn.id = d.device_name_id
+        JOIN Display disp ON disp.id = d.display_id
+        JOIN Platform p ON p.id = d.platform_id
+        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        """
+    ).dropna()
+    summary = _ols_summary(
+        'price ~ battery_mah + weight + display_size_inch + resolution_pixels '
+        '+ screen_to_body_ratio + ram_gb + storage_gb + year '
+        '+ C(brand) + C(chipset_manufacturer)',
+        df,
+    )
+    return {
+        "name": "Price ~ all predictors (full OLS)",
+        "description": (
+            "Multivariate OLS including brand, chipset manufacturer, year, RAM, storage, "
+            "and physical specs. Brand and chipset enter as categoricals "
+            "(reference = alphabetically first level). `ppi_density` is omitted "
+            "because it's collinear with `resolution_pixels` and `display_size_inch`."
         ),
         **summary,
     }
