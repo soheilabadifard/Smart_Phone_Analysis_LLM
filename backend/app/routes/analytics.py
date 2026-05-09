@@ -41,7 +41,12 @@ def brand_summary() -> list[dict]:
 
 @router.get("/annual-launches")
 def annual_launches() -> list[dict]:
-    """R2 — Year-over-year launches and avg specs."""
+    """R2 — Year-over-year launches and avg specs.
+
+    LEFT JOIN to Platform so the launches count includes devices whose chipset
+    info is missing. AVG(p.ram_gb) / AVG(p.internal_storage_gb) ignore NULL
+    automatically, so those are computed only over devices with known platform.
+    """
     current_year = datetime.now().year
     return _rows(
         f"""
@@ -53,7 +58,7 @@ def annual_launches() -> list[dict]:
             ROUND(AVG(p.ram_gb), 2) AS avg_ram_gb,
             ROUND(AVG(p.internal_storage_gb), 2) AS avg_storage_gb
         FROM Device d
-        JOIN Platform p ON p.id = d.platform_id
+        LEFT JOIN Platform p ON p.id = d.platform_id
         WHERE d.year BETWEEN 2010 AND {current_year}
         GROUP BY d.year
         ORDER BY d.year
