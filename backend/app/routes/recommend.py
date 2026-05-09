@@ -109,10 +109,10 @@ def recommend(req: RecommendRequest) -> list[PhoneCard]:
             nt.technology AS network
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
-        JOIN Platform p ON p.id = d.platform_id
-        JOIN Display disp ON disp.id = d.display_id
-        JOIN OS o ON o.id = d.os_id
-        JOIN Network_Technology nt ON nt.id = d.network_technology_id
+        LEFT JOIN Platform p ON p.id = d.platform_id
+        LEFT JOIN Display disp ON disp.id = d.display_id
+        LEFT JOIN OS o ON o.id = d.os_id
+        LEFT JOIN Network_Technology nt ON nt.id = d.network_technology_id
         {where_sql}
         ORDER BY {sort_col} {req.sort_order.upper()}
         LIMIT :lim
