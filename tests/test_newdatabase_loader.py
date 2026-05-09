@@ -207,7 +207,8 @@ def synthetic_processed_df():
             "volume": 85400.0, "price_eur": 1199.0,
             "sensor_payload": "['Face ID']",
         },
-        # row 3: NaN required FK columns — should be dropped by addDevice
+        # row 3: NaN platform fields — survives with NULL platform_id under
+        # the nullable-FK schema (2026-05-09).
         {
             "brand": "Mystery", "model": "Phone X",
             "network_technology": "GSM / HSPA / LTE",
@@ -217,7 +218,7 @@ def synthetic_processed_df():
             "display_size_inch": 5.0, "display_size_cm": 12.7,
             "screen_to_body_ratio": 70.0, "resolution_pixels": 1280 * 720,
             "resolution_ratio": "16:9", "ppi_density": 320.0,
-            # platform fields all NaN — addDevice should drop this row
+            # platform fields all NaN → device_id keeps platform_id = NULL
             "os_name": "Android", "os_version": "13",
             "chipset_manufacturer": pd.NA, "cpu_core_count": pd.NA,
             "internal_storage_gb": pd.NA, "ram_gb": pd.NA,
@@ -331,11 +332,11 @@ class TestEndToEndAddAll:
         assert counts["Network_Technology"] == 2
         # Sim: (single,esim) + (dual,nano) + (single,nano) = 3
         assert counts["Sim"] == 3
-        # Devices: 5 raw rows → row 4 deduped by device_key → row 3 dropped
-        # for NaN platform → 3 devices.
-        assert counts["Device"] == 3
+        # Devices: 5 raw rows → row 4 deduped by device_key → row 3 kept
+        # with NULL platform_id (nullable-FK schema) → 4 devices.
+        assert counts["Device"] == 4
 
-    def test_addDevice_drops_unresolved_fk_rows(self, sqlite_engine, synthetic_processed_df, capsys):
+    def test_addDevice_keeps_rows_with_null_fks(self, sqlite_engine, synthetic_processed_df, capsys):
         loader = _make_loader(sqlite_engine)
         loader._source_dataframe = synthetic_processed_df
 
@@ -348,21 +349,23 @@ class TestEndToEndAddAll:
             loader.addDisplay()
             loader.addOs()
             loader.addPlatform()  # row 3's platform is NaN → not inserted
-            loader.addDevice()    # row 3 → unresolved platform_id → dropped
+            loader.addDevice()    # row 3 → unresolved platform_id → kept with NULL
             loader.connection = sqlite_engine
 
-        # The "Mystery" device must NOT have made it into Device
+        # The "Mystery" device IS inserted now, with platform_id = NULL.
         with sqlite_engine.connect() as conn:
-            mystery_count = conn.execute(text("""
-                SELECT COUNT(*) FROM Device d
+            mystery_row = conn.execute(text("""
+                SELECT d.platform_id
+                FROM Device d
                 JOIN Device_Name dn ON dn.id = d.device_name_id
                 WHERE dn.brand = 'Mystery'
-            """)).scalar()
-        assert mystery_count == 0
+            """)).first()
+        assert mystery_row is not None, "Mystery device should now be loaded"
+        assert mystery_row.platform_id is None, "platform_id should be NULL"
 
-        # The drop diagnostic should have printed
+        # The diagnostic should have logged the per-column NaN count
         captured = capsys.readouterr()
-        assert "Dropping" in captured.out and "device row" in captured.out
+        assert "platform_id" in captured.out and "NULL dim FK" in captured.out
 
     def test_addAll_idempotent_under_replay(self, sqlite_engine, synthetic_processed_df):
         """Running the full pipeline twice must produce the same row counts."""
@@ -384,7 +387,7 @@ class TestEndToEndAddAll:
 
         with sqlite_engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM Device_Name")).scalar() == 4
-            assert conn.execute(text("SELECT COUNT(*) FROM Device")).scalar() == 3
+            assert conn.execute(text("SELECT COUNT(*) FROM Device")).scalar() == 4
 
 
 class TestDeviceKeyDedupe:
