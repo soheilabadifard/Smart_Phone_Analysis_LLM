@@ -23,6 +23,13 @@ Device(id, device_key, device_name_id, network_technology_id, camera_id,
   - year BETWEEN 1995 AND 2030
   - price_eur is in EUR; may be NULL for un-priced devices
   - weight (g), length/width/height (mm), volume (cc), battery_capacity_mah (mAh)
+  - All seven dim FK columns (device_name_id, network_technology_id, camera_id,
+    display_id, os_id, platform_id, sim_id) are NULLABLE. A device whose
+    GSMArena page lacked a given attribute keeps the row but stores NULL for
+    that FK. INNER JOIN to a dim therefore excludes such devices, which is
+    usually what you want for filter/aggregate queries; use LEFT JOIN only
+    when the question explicitly cares about devices missing the attribute
+    (e.g. "how many devices have no recorded chipset").
 
 Device_Name(id, brand, model)
   - UNIQUE(brand, model)
