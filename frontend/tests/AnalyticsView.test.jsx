@@ -88,6 +88,44 @@ const RESPONSES = {
     conclusion: 'reject H0 at α=0.05',
     groups: [{ size: 'small', n: 100, mean: 180, std: 20, median: 178, values: [180] }, { size: 'large', n: 50, mean: 500, std: 100, median: 490, values: [500] }],
   },
+  'ht-battery-by-cpu': {
+    name: 'Battery by CPU cores', description: 'one-way ANOVA', test: 'one-way ANOVA',
+    p_value: 0.0, alpha: 0.05, conclusion: 'reject H0 at α=0.05',
+    anova: [{ factor: 'C(cpu_core_count)', sum_sq: 1e9, df: 5, F: 100, p_value: 0 }],
+    groups: [{ cpu_core_count: 8, n: 200, mean: 4500, std: 500, median: 4500, values: [4500] }],
+  },
+  'ht-price-by-chipset': {
+    name: 'Price by chipset', description: 'one-way ANOVA', test: 'one-way ANOVA',
+    p_value: 0.0, alpha: 0.05, conclusion: 'reject H0 at α=0.05',
+    anova: [{ factor: 'C(chipset_manufacturer)', sum_sq: 1e7, df: 5, F: 80, p_value: 0 }],
+    groups: [{ chipset_manufacturer: 'Apple', n: 100, mean: 1000, std: 200, median: 999, values: [1000] }],
+  },
+  'ht-price-by-main-camera': {
+    name: 'Price by camera count', description: 'one-way ANOVA', test: 'one-way ANOVA',
+    p_value: 0.0, alpha: 0.05, conclusion: 'reject H0 at α=0.05',
+    anova: [{ factor: 'C(main_cameras_num)', sum_sq: 1e7, df: 4, F: 90, p_value: 0 }],
+    groups: [{ main_cameras_num: 3, n: 100, mean: 800, std: 200, median: 790, values: [800] }],
+  },
+  'price-regression-specs': {
+    name: 'Price ~ physical specs (multivariate OLS)',
+    description: 'OLS on six numeric specs',
+    n: 5886, r_squared: 0.406, adj_r_squared: 0.405,
+    f_statistic: 669.0, f_p_value: 0,
+    coefficients: [
+      { name: 'Intercept', coef: -100.5, std_err: 50.2, t: -2.0, p_value: 0.04 },
+      { name: 'battery_mah', coef: 0.05, std_err: 0.005, t: 10.0, p_value: 0.001 },
+    ],
+  },
+  'price-regression-os': {
+    name: 'Price ~ OS (categorical OLS)',
+    description: 'Per-OS price intercept',
+    n: 6057, r_squared: 0.119, adj_r_squared: 0.118,
+    f_statistic: 67.7, f_p_value: 1.4e-155,
+    coefficients: [
+      { name: 'Intercept', coef: 200.0, std_err: 10.0, t: 20.0, p_value: 0 },
+      { name: 'C(os_name)[T.iOS]', coef: 700.0, std_err: 25.0, t: 28.0, p_value: 0 },
+    ],
+  },
 }
 
 function payloadFor(url) {
@@ -139,6 +177,19 @@ describe('AnalyticsView', () => {
     // Section 3
     expect(screen.getByText(/2023 average price by brand/i)).toBeInTheDocument()
     expect(screen.getByText(/Hypothesis tests/i)).toBeInTheDocument()
+
+    // Section 4
+    expect(screen.getByText(/Regression models/i)).toBeInTheDocument()
+    expect(screen.getByText(/Price ~ physical specs/i)).toBeInTheDocument()
+    expect(screen.getByText(/Price ~ OS/i)).toBeInTheDocument()
+  })
+
+  it('renders OLS regression tables with R² and coefficient rows', async () => {
+    render(<AnalyticsView />)
+    // R² value from price-regression-specs mock
+    await waitFor(() => screen.getByText(/0\.406/i))
+    // The OS dummy term from price-regression-os
+    expect(screen.getByText(/C\(os_name\)\[T\.iOS\]/i)).toBeInTheDocument()
   })
 
   it('renders hypothesis-test panels with conclusion text', async () => {
