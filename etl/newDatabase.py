@@ -300,21 +300,21 @@ class Device(Base):
     )
     id = Column(Integer, primary_key=True,autoincrement=True)
     device_key = Column(String(64), nullable=False)
-    device_name_id = Column(Integer, ForeignKey('Device_Name.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
-    network_technology_id = Column(Integer, ForeignKey('Network_Technology.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
+    device_name_id = Column(Integer, ForeignKey('Device_Name.id', onupdate='CASCADE', ondelete='RESTRICT'))
+    network_technology_id = Column(Integer, ForeignKey('Network_Technology.id', onupdate='CASCADE', ondelete='RESTRICT'))
     year = Column(Integer, nullable=False)
     launch_status = Column(String(255))
     battery_capacity_mah = Column(Integer)
-    camera_id = Column(Integer, ForeignKey('Camera.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
-    display_id = Column(Integer, ForeignKey('Display.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
+    camera_id = Column(Integer, ForeignKey('Camera.id', onupdate='CASCADE', ondelete='RESTRICT'))
+    display_id = Column(Integer, ForeignKey('Display.id', onupdate='CASCADE', ondelete='RESTRICT'))
     weight = Column(Float)
     length = Column(Float)
     width = Column(Float)
     height = Column(Float)
     volume = Column(Float)
-    os_id = Column(Integer, ForeignKey('OS.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
-    platform_id = Column(Integer, ForeignKey('Platform.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
-    sim_id = Column(Integer, ForeignKey('Sim.id', onupdate='CASCADE', ondelete='RESTRICT'), nullable=False)
+    os_id = Column(Integer, ForeignKey('OS.id', onupdate='CASCADE', ondelete='RESTRICT'))
+    platform_id = Column(Integer, ForeignKey('Platform.id', onupdate='CASCADE', ondelete='RESTRICT'))
+    sim_id = Column(Integer, ForeignKey('Sim.id', onupdate='CASCADE', ondelete='RESTRICT'))
     price_eur = Column(Float)
     form_factor = Column(String(16), nullable=False, server_default='phone')
 
@@ -552,12 +552,11 @@ class AddToTable:
 
     def addDevice(self):
         device_df = self.build_device_records()
-        required_fks = ['device_name_id', 'network_technology_id', 'camera_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
-        before = len(device_df)
-        device_df = device_df.dropna(subset=required_fks).reset_index(drop=True)
-        dropped = before - len(device_df)
-        if dropped:
-            print(f"Dropping {dropped} device rows with unresolved FK lookups (incomplete source data)")
+        nullable_fks = ['device_name_id', 'network_technology_id', 'camera_id', 'display_id', 'os_id', 'platform_id', 'sim_id']
+        unresolved_per_fk = {fk: int(device_df[fk].isna().sum()) for fk in nullable_fks if device_df[fk].isna().any()}
+        if unresolved_per_fk:
+            total_with_gaps = int(device_df[nullable_fks].isna().any(axis=1).sum())
+            print(f"Loading {total_with_gaps} device rows with at least one NULL dim FK (per-column NaN counts: {unresolved_per_fk})")
         device_columns = ['device_name_id', 'network_technology_id', 'year', 'launch_status', 'battery_capacity_mah', 'camera_id', 'display_id', 'weight', 'length', 'width', 'height', 'volume', 'os_id', 'platform_id', 'sim_id', 'price_eur', 'form_factor']
         self.append_new_rows('Device', device_df[['device_key'] + device_columns], ['device_key'])
 
