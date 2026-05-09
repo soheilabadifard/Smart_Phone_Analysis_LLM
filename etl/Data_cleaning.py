@@ -231,7 +231,7 @@ class DataPreProcess:
             lambda x: self._extract_with_regex(x, r'(\d+ x \d+) pixels')
         )
         self.df['Resolution_Ratio'] = self.df['Display_Resolution'].apply(
-            lambda x: self._extract_with_regex(x, r'(\d+:\d+) ratio')
+            lambda x: self._extract_with_regex(x, r'(\d+(?:\.\d+)?:\d+) ratio')
         )
         self.df['PPI_Density'] = self.df['Display_Resolution'].apply(
             lambda x: self._extract_with_regex(x, r'(~?\d+) ppi')
@@ -243,6 +243,26 @@ class DataPreProcess:
         self.df['PPI_Density'] = self.df['PPI_Density'].apply(remove_tilde)
         self.df['PPI_Density'].value_counts()
 
+    # Trivial naming-variant fixes for base_os. Android skins (EMUI, MagicOS,
+    # MIUI, ColorOS, …), `Microsoft`, and `Proprietary` are intentionally NOT
+    # in this map — they're kept distinct on purpose.
+    _OS_CANONICAL_MAP = {
+        'Harmony': 'HarmonyOS',
+        'Android-based': 'Android',
+        'Symbian^3,': 'Symbian',
+    }
+
+    # Brand naming-variant fixes. All-caps brands (LG, ZTE, BLU, HTC) are
+    # left alone — they're correctly that way upstream.
+    _BRAND_CANONICAL_MAP = {
+        'alcatel': 'Alcatel',
+    }
+
+    def canonicalize_brand(self):
+        self.df['brand'] = self.df['brand'].apply(
+            lambda x: self._BRAND_CANONICAL_MAP.get(x, x) if isinstance(x, str) else x
+        )
+
     def extract_base_os(self):
 
         self.df['base_os'] = self.df['Platform_OS'].apply(
@@ -251,7 +271,10 @@ class DataPreProcess:
 
     def _extract_os_from_first_space(self, os_string):
 
-        return os_string.split(' ', 1)[0] if isinstance(os_string, str) else os_string
+        if not isinstance(os_string, str):
+            return os_string
+        token = os_string.split(' ', 1)[0]
+        return self._OS_CANONICAL_MAP.get(token, token)
 
     def extract_os_version(self):
 
@@ -533,6 +556,7 @@ class DataPreProcess:
         self.drop_old_columns()
         self.final_adjustments()
         self.year_to_int()
+        self.canonicalize_brand()
         return self.df
 
 
