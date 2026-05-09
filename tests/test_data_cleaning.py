@@ -219,15 +219,19 @@ class TestDisplayExtraction:
         df = pd.DataFrame({
             "Display_Resolution": [
                 "1179 x 2556 pixels, 19.5:9 ratio (~460 ppi density)",
+                "720 x 1560 pixels, 19.5:9 ratio (~282 ppi density)",
+                "480 x 800 pixels, 5:3 ratio (~233 ppi density)",
+                "1080 x 2400 pixels, 20:9 ratio",
             ],
         })
         proc = DataPreProcess(df)
         proc.extract_resolution_details()
         assert proc.df["Resolution_Pixels"].iloc[0] == "1179 x 2556"
-        # Documented bug: the regex `(\d+:\d+) ratio` doesn't allow decimals,
-        # so "19.5:9" is captured as "5:9". Fix would change the regex to
-        # something like `(\d+(?:\.\d+)?:\d+(?:\.\d+)?) ratio`. Pinned here.
-        assert proc.df["Resolution_Ratio"].iloc[0] == "5:9"
+        # Regex now allows the decimal prefix — "19.5:9" stays "19.5:9".
+        # Integer ratios like "5:3" / "20:9" still extracted unchanged.
+        assert proc.df["Resolution_Ratio"].tolist() == [
+            "19.5:9", "19.5:9", "5:3", "20:9",
+        ]
         assert proc.df["PPI_Density"].iloc[0] == "460"
 
 
@@ -243,11 +247,37 @@ class TestOSExtraction:
         proc.extract_base_os()
         assert proc.df["base_os"].tolist() == ["iOS", "Android"]
 
+    def test_base_os_canonical_map(self):
+        df = pd.DataFrame({"Platform_OS": [
+            "Harmony OS 4.0",        # → HarmonyOS (was 23 rows)
+            "Android-based 11",       # → Android (was 1 row)
+            "Symbian^3, Anna",        # → Symbian (was 2 rows)
+            "EMUI 12",                # unchanged — kept distinct
+            "MagicOS 7",              # unchanged — kept distinct
+            "Microsoft Windows Phone 8.1",  # unchanged — kept as 'Microsoft'
+            "Proprietary",            # unchanged
+        ]})
+        proc = DataPreProcess(df)
+        proc.extract_base_os()
+        assert proc.df["base_os"].tolist() == [
+            "HarmonyOS", "Android", "Symbian",
+            "EMUI", "MagicOS", "Microsoft", "Proprietary",
+        ]
+
     def test_version_extraction(self):
         df = pd.DataFrame({"Platform_OS": ["Android 14, One UI 6.1", "iOS 17"]})
         proc = DataPreProcess(df)
         proc.extract_os_version()
         assert proc.df["OS_Version"].tolist() == ["14", "17"]
+
+
+class TestBrandCanonicalization:
+    def test_alcatel_capitalized(self):
+        df = pd.DataFrame({"brand": ["alcatel", "Samsung", "ZTE", "LG"]})
+        proc = DataPreProcess(df)
+        proc.canonicalize_brand()
+        # alcatel → Alcatel; all-caps brands left alone.
+        assert proc.df["brand"].tolist() == ["Alcatel", "Samsung", "ZTE", "LG"]
 
 
 class TestChipsetExtraction:
