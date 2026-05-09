@@ -72,7 +72,7 @@ def load_existing_pricing(out_path: str) -> dict:
 
 
 def main(
-    phone_models_path=str(DATA_DIR / 'phone_models_old.json'),
+    phone_models_path=str(DATA_DIR / 'phone_models.json'),
     flattened_csv=str(DATA_DIR / 'flattened_data.csv'),
     out_path=str(DATA_DIR / 'pricing.json'),
 ):
@@ -110,7 +110,7 @@ def main(
 
     print(
         f"\nDone. Scraped {scraped} new, skipped {skipped} already-priced, "
-        f"{missing_url} models had no URL in phone_models_old.json."
+        f"{missing_url} models had no URL in phone_models.json."
     )
     return final_dic
 
