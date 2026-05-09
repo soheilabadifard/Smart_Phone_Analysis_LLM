@@ -53,6 +53,45 @@ function HistogramGrid({ data }) {
   return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>{cells}</div>
 }
 
+function RegressionTable({ data }) {
+  if (!data) return null
+  if (data.error) {
+    return <div style={{ color: '#ff7e7e' }}>Could not fit model: {data.error}</div>
+  }
+  if (!Array.isArray(data.coefficients)) {
+    // Defensive: API contract is { coefficients: [...] } but tests / partial
+    // responses may not match. Render nothing rather than crash.
+    return null
+  }
+  return (
+    <div>
+      <div style={{ color: '#9aa0a6', fontSize: '0.9em', marginBottom: '0.5rem' }}>{data.description}</div>
+      <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', fontSize: '0.95em', marginBottom: '0.5rem' }}>
+        <span><b>n:</b> {fmt(data.n, 0)}</span>
+        <span><b>R²:</b> {fmt(data.r_squared, 3)}</span>
+        <span><b>Adj R²:</b> {fmt(data.adj_r_squared, 3)}</span>
+        <span><b>F:</b> {fmt(data.f_statistic, 2)} (p = {fmt(data.f_p_value, 4)})</span>
+      </div>
+      <table style={{ fontSize: '0.92em' }}>
+        <thead>
+          <tr><th>Variable</th><th>Coef</th><th>Std err</th><th>t</th><th>p-value</th></tr>
+        </thead>
+        <tbody>
+          {data.coefficients.map((c) => (
+            <tr key={c.name}>
+              <td>{c.name}</td>
+              <td>{fmt(c.coef, 4)}</td>
+              <td>{fmt(c.std_err, 4)}</td>
+              <td>{fmt(c.t, 3)}</td>
+              <td style={{ color: c.p_value !== null && c.p_value < 0.05 ? '#9bd17a' : '#9aa0a6' }}>{fmt(c.p_value, 4)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function HypothesisTestPanel({ data }) {
   if (!data) return null
   const { name, description, test, p_value, conclusion, anova, groups } = data
@@ -128,6 +167,13 @@ export default function AnalyticsView() {
   const ht4 = useEndpoint('/api/analytics/ht-battery-by-brand-and-size')
   const ht5 = useEndpoint('/api/analytics/ht-price-by-brand-and-size')
   const ht6 = useEndpoint('/api/analytics/ht-weight-by-size')
+  const ht7 = useEndpoint('/api/analytics/ht-battery-by-cpu')
+  const ht8 = useEndpoint('/api/analytics/ht-price-by-chipset')
+  const ht9 = useEndpoint('/api/analytics/ht-price-by-main-camera')
+
+  // Section 4 — OLS regression models (notebook cells 18, 74)
+  const olsSpecs = useEndpoint('/api/analytics/price-regression-specs')
+  const olsOs = useEndpoint('/api/analytics/price-regression-os')
 
   return (
     <div>
@@ -395,6 +441,21 @@ export default function AnalyticsView() {
         <HypothesisTestPanel data={ht4.data} />
         <HypothesisTestPanel data={ht5.data} />
         <HypothesisTestPanel data={ht6.data} />
+        <HypothesisTestPanel data={ht7.data} />
+        <HypothesisTestPanel data={ht8.data} />
+        <HypothesisTestPanel data={ht9.data} />
+      </ChartCard>
+
+      <h2>Regression models</h2>
+
+      <ChartCard title="Price ~ physical specs (OLS)"
+                 subtitle="Multivariate regression of price on six numeric specs. Significant coefficients (p &lt; 0.05) shown in green.">
+        <RegressionTable data={olsSpecs.data} />
+      </ChartCard>
+
+      <ChartCard title="Price ~ OS (OLS, one-hot)"
+                 subtitle="Per-OS price intercept relative to the reference OS. Tells you which OS commands a premium.">
+        <RegressionTable data={olsOs.data} />
       </ChartCard>
     </div>
   )
