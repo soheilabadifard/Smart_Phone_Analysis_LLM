@@ -69,6 +69,37 @@ def extract_integer_value(value):
     return int(number)
 
 
+def extract_memory_gb(value):
+    """Parse a memory token like '768MB', '1.5 GB', '1TB' to integer GB.
+
+    The cleaner preserves the unit suffix in processed_data.csv. The naive
+    `extract_integer_value` strips the unit, so '768MB' silently became
+    `ram_gb=768` and '1TB' became `internal_storage_gb=1`. This function
+    converts MB→GB by /1024 and TB→GB by *1024. Any positive sub-GB value
+    floors to 1 to satisfy the `> 0` CHECK constraint; unparseable input
+    returns None so the row's platform_id resolves to NULL under the
+    nullable-FK schema.
+    """
+    if pd.isna(value):
+        return None
+    match = re.search(r'(\d+(?:\.\d+)?)\s*(TB|GB|MB)\b', str(value), re.IGNORECASE)
+    if not match:
+        return None
+    quantity = float(match.group(1))
+    unit = match.group(2).upper()
+    if unit == 'TB':
+        gb = quantity * 1024
+    elif unit == 'GB':
+        gb = quantity
+    else:  # MB
+        gb = quantity / 1024
+    if gb <= 0:
+        return None
+    if gb < 1:
+        return 1
+    return int(round(gb))
+
+
 def extract_camera_resolution(value):
     if pd.isna(value):
         return None
@@ -436,8 +467,8 @@ class AddToTable:
         for column in ['display_size_inch', 'display_size_cm', 'screen_to_body_ratio', 'ppi_density', 'weight', 'length', 'width', 'height', 'volume', 'price_eur']:
             dataframe[column] = dataframe[column].map(extract_numeric_value)
 
-        dataframe['internal_storage_gb'] = dataframe['Storage'].map(extract_integer_value)
-        dataframe['ram_gb'] = dataframe['RAM'].map(extract_integer_value)
+        dataframe['internal_storage_gb'] = dataframe['Storage'].map(extract_memory_gb)
+        dataframe['ram_gb'] = dataframe['RAM'].map(extract_memory_gb)
         dataframe['sensor_names'] = dataframe['sensor_payload'].map(parse_sensor_list)
         dataframe['resolution_ratio'] = dataframe['resolution_ratio'].map(clean_text_value)
 
