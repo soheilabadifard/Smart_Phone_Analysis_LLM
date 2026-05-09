@@ -16,6 +16,7 @@ from etl.newDatabase import (
     clean_text_value,
     extract_camera_resolution,
     extract_integer_value,
+    extract_memory_gb,
     extract_numeric_value,
     normalize_lookup_value,
     parse_sensor_list,
@@ -57,6 +58,36 @@ class TestExtractIntegerValue:
     )
     def test_truncates_to_int(self, raw, expected):
         assert extract_integer_value(raw) == expected
+
+
+class TestExtractMemoryGB:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("8GB",     8),
+            ("8 GB",    8),
+            ("128GB",   128),
+            ("256GB",   256),
+            ("1.5GB",   2),     # round to nearest int
+            ("1.1GB",   1),
+            ("1TB",     1024),
+            ("2TB",     2048),
+            ("768MB",   1),     # sub-GB floors to 1
+            ("512MB",   1),
+            ("256MB",   1),
+            ("4MB",     1),     # any positive sub-GB → 1 (preserves CHECK > 0)
+            ("not a number", None),
+            ("",        None),
+        ],
+    )
+    def test_unit_aware_conversion(self, raw, expected):
+        assert extract_memory_gb(raw) == expected
+
+    def test_nan_returns_none(self):
+        assert extract_memory_gb(float("nan")) is None
+
+    def test_none_returns_none(self):
+        assert extract_memory_gb(None) is None
 
 
 class TestExtractCameraResolution:
