@@ -212,6 +212,23 @@ class TestQuantitativeDistributions:
 # ---------------------------------------------------------------------------
 
 
+class TestAvailableYears:
+    def test_returns_descending_list(self, client):
+        r = client.get("/api/analytics/available-years")
+        assert r.status_code == 200
+        years = r.json()
+        assert isinstance(years, list)
+        assert all(isinstance(y, int) for y in years)
+        assert years == sorted(set(years), reverse=True)
+
+    def test_form_factor_filter(self, client):
+        phone_years = client.get("/api/analytics/available-years?form_factor=phone").json()
+        watch_years = client.get("/api/analytics/available-years?form_factor=watch").json()
+        # The two are filtered independently; watch may be empty if seed has no watch.
+        assert isinstance(phone_years, list)
+        assert isinstance(watch_years, list)
+
+
 class TestPriceCiByBrand:
     def test_returns_one_row_per_brand(self, client):
         r = client.get("/api/analytics/price-ci-by-brand")
