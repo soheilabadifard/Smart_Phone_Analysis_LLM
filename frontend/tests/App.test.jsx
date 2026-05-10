@@ -5,12 +5,14 @@ import userEvent from '@testing-library/user-event'
 import App from '../src/App.jsx'
 
 describe('App tab navigation', () => {
-  it('renders the three tabs', async () => {
+  it('renders the five tabs', async () => {
     render(<App />)
     // findBy* waits for pending state updates to flush, avoiding act() warnings
     // from RecommendView's mount-time fetch.
     expect(await screen.findByRole('button', { name: /recommend/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /analytics/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /phone analytics/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /watch analytics/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /tablet analytics/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^ask$/i })).toBeInTheDocument()
   })
 
@@ -20,12 +22,20 @@ describe('App tab navigation', () => {
     expect(recommendTab.className).toMatch(/active/)
   })
 
-  it('switches to Analytics tab on click', async () => {
+  it('switches to Phone Analytics tab on click', async () => {
     const user = userEvent.setup()
     render(<App />)
-    await user.click(screen.getByRole('button', { name: /analytics/i }))
-    const analyticsTab = screen.getByRole('button', { name: /analytics/i })
-    expect(analyticsTab.className).toMatch(/active/)
+    await user.click(screen.getByRole('button', { name: /phone analytics/i }))
+    const tab = screen.getByRole('button', { name: /phone analytics/i })
+    expect(tab.className).toMatch(/active/)
+  })
+
+  it('switches to Watch Analytics tab on click', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /watch analytics/i }))
+    const tab = screen.getByRole('button', { name: /watch analytics/i })
+    expect(tab.className).toMatch(/active/)
   })
 
   it('switches to Ask tab on click', async () => {
