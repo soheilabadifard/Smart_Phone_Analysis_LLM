@@ -40,7 +40,14 @@ def convert(
         data = json.load(f)
 
     rows = []
-    for model, configs in data.items():
+    for model, entry in data.items():
+        # Handle both pricing.json schemas:
+        #  - new (since 2026-05): {scraped_at, configs}
+        #  - legacy: bare config dict, or None
+        if isinstance(entry, dict) and ('scraped_at' in entry or 'configs' in entry):
+            configs = entry.get('configs')
+        else:
+            configs = entry
         if configs is None:
             continue
         for config, price in configs.items():
