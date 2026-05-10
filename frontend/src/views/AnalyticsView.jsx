@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import Plot from 'react-plotly.js'
 
+import { humanizeColumnName } from '../utils/format.js'
+
 const PLOTLY_LAYOUT = {
   paper_bgcolor: '#161a21',
   plot_bgcolor: '#161a21',
@@ -45,7 +47,7 @@ function HistogramGrid({ data }) {
     <Plot
       key={col}
       data={[{ type: 'histogram', x: data[col], marker: { color: '#6aa9ff' }, opacity: 0.85 }]}
-      layout={{ ...PLOTLY_LAYOUT, height: 220, title: { text: col, font: { size: 13 } }, margin: { t: 30, r: 10, b: 30, l: 40 } }}
+      layout={{ ...PLOTLY_LAYOUT, height: 220, title: { text: humanizeColumnName(col), font: { size: 13 } }, margin: { t: 30, r: 10, b: 30, l: 40 } }}
       config={PLOTLY_CONFIG}
       style={{ width: '100%' }}
     />
@@ -527,13 +529,13 @@ export default function AnalyticsView() {
       </ChartCard>
 
       <ChartCard title="Correlation matrix (Pearson, phone-only)">
-        {corr.data && (
+        {corr.data && corr.data.matrix && (
           <Plot
             data={[{
               type: 'heatmap',
               z: corr.data.matrix,
-              x: corr.data.columns,
-              y: corr.data.columns,
+              x: (corr.data.columns || []).map(humanizeColumnName),
+              y: (corr.data.columns || []).map(humanizeColumnName),
               zmin: -1, zmax: 1,
               colorscale: 'RdBu', reversescale: true,
               hovertemplate: '%{x} ↔ %{y}<br>r = %{z:.2f}<extra></extra>',
