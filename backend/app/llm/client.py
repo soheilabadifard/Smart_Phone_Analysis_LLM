@@ -57,6 +57,60 @@ def extract_sql(response_text: str) -> str:
     return response_text.strip().rstrip(";").strip()
 
 
+def has_fenced_sql(response_text: str) -> bool:
+    """True if the assistant response contains a ```sql … ``` block.
+
+    Used by the review loop to distinguish approval (no fence) from a
+    refinement (fenced SQL).
+    """
+    return _SQL_FENCE.search(response_text) is not None
+
+
+def format_result_preview(columns: list[str], rows: list[dict],
+                          max_rows: int = 10) -> str:
+    """Render a Markdown table preview of an executed query result.
+
+    Sent back to the LLM in the review turn so it can judge whether the
+    table actually answers the question. Truncated to `max_rows` to keep
+    the prompt size bounded.
+    """
+    if not columns:
+        return "(no columns returned)"
+    if not rows:
+        return f"(0 rows returned for columns: {', '.join(columns)})"
+
+    header = "| " + " | ".join(columns) + " |"
+    sep = "|" + "|".join(["---"] * len(columns)) + "|"
+    body_rows = rows[:max_rows]
+    body = "\n".join(
+        "| " + " | ".join("" if r.get(c) is None else str(r.get(c)) for c in columns) + " |"
+        for r in body_rows
+    )
+    extra = ""
+    if len(rows) > max_rows:
+        extra = f"\n\n…{len(rows) - max_rows} more row(s) not shown."
+    return f"{header}\n{sep}\n{body}{extra}\n\n(returned {len(rows)} row(s))"
+
+
+def review_user_message(question: str, sql: str, preview: str) -> str:
+    """User turn that asks the model to judge its own result."""
+    return (
+        "You ran this SQL:\n"
+        "```sql\n"
+        f"{sql}\n"
+        "```\n\n"
+        "It produced this result:\n\n"
+        f"{preview}\n\n"
+        f"Question: \"{question}\"\n\n"
+        "Does this result correctly answer the question?\n"
+        "- If YES, reply with the single word `OK` and nothing else.\n"
+        "- If NO, emit a corrected SQL in a ```sql fenced block, with no other prose.\n"
+        "- An empty result set is a valid answer when the data genuinely doesn't "
+        "match the filters; only refine if you can identify a specific column, "
+        "join, or filter that needs to change."
+    )
+
+
 def chat(messages: list[dict]) -> str:
     """Single round-trip to the MLX server. Returns the assistant text."""
     resp = _client().chat.completions.create(
