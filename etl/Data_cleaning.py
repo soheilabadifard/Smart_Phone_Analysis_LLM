@@ -1,4 +1,5 @@
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -94,31 +95,20 @@ class DataPreProcess:
         self.df['Selfie camera_Features'] = self.df['Selfie camera_Features'].apply(self.get_features_list)
 
     def demintions_process(self):
-        length = []
-        width = []
-        height = []
-        volume = []
+        length, width, height, volume = [], [], [], []
+        failed = 0
         for x in list(self.df['Body_Dimensions']):
+            tokens = re.findall(r'(\d+(?:\.\d+)?)', x) if isinstance(x, str) else []
             try:
-                m = re.findall(r'(\d+(?:\.\d+)?)', x)
-                length.append(float(m[0]))
-            except:
-                length.append(np.nan)
-            try:
-                m = re.findall(r'(\d+(?:\.\d+)?)', x)
-                width.append(float(m[1]))
-            except:
-                width.append(np.nan)
-            try:
-                m = re.findall(r'(\d+(?:\.\d+)?)', x)
-                height.append(float(m[2]))
-            except:
-                height.append(np.nan)
-            try:
-                m = re.findall(r'(\d+(?:\.\d+)?)', x)
-                volume.append(float(m[0]) * float(m[1]) * float(m[2]))
-            except:
-                volume.append(np.nan)
+                l, w, h = float(tokens[0]), float(tokens[1]), float(tokens[2])
+                length.append(l); width.append(w); height.append(h)
+                volume.append(l * w * h)
+            except (IndexError, ValueError, TypeError):
+                length.append(np.nan); width.append(np.nan)
+                height.append(np.nan); volume.append(np.nan)
+                failed += 1
+        if failed:
+            print(f"demintions_process: {failed} rows unparseable", file=sys.stderr)
         self.df['length'] = length
         self.df['width'] = width
         self.df['height'] = height
@@ -126,13 +116,16 @@ class DataPreProcess:
 
     def weight_process(self):
         weight = []
+        failed = 0
         for x in list(self.df['Body_Weight']):
             try:
                 m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 weight.append(float(m[0]))
-            except:
-                m = np.nan
-                weight.append(m)
+            except (IndexError, ValueError, TypeError):
+                weight.append(np.nan)
+                failed += 1
+        if failed:
+            print(f"weight_process: {failed} rows unparseable", file=sys.stderr)
         self.df['weight'] = weight
 
     def network_tech_process(self):
@@ -144,23 +137,29 @@ class DataPreProcess:
 
     def battery_capacity_process(self):
         battery_capacity = []
+        failed = 0
         for x in list(self.df['Battery_Type']):
             try:
                 m = re.findall(r'(\d+)', x)
                 battery_capacity.append(int(m[0]))
-            except:
-                m = np.nan
-                battery_capacity.append(m)
-        self.df['Battery_capactiy'] = battery_capacity
+            except (IndexError, ValueError, TypeError):
+                battery_capacity.append(np.nan)
+                failed += 1
+        if failed:
+            print(f"battery_capacity_process: {failed} rows unparseable", file=sys.stderr)
+        self.df['Battery_capacity'] = battery_capacity
 
     def sensors_process(self):
         sensors = []
+        failed = 0
         for x in list(self.df['Features_Sensors']):
             try:
-                m = x.split(',')
-                sensors.append(m)
-            except:
+                sensors.append(x.split(','))
+            except (AttributeError, TypeError):
                 sensors.append(np.nan)
+                failed += 1
+        if failed:
+            print(f"sensors_process: {failed} rows unparseable", file=sys.stderr)
         self.df['Sensors'] = sensors
 
     def extract_display_characteristics(self):
@@ -175,10 +174,13 @@ class DataPreProcess:
         )
 
         def remove_tilde_percent(value):
+            cleaned = str(value).replace("~", "").replace("%", "")
             try:
-                return float(str(value).replace("~", "").replace("%", ""))
-            except:
-                return (str(value).replace("~", "").replace("%", ""))
+                return float(cleaned)
+            except (ValueError, TypeError):
+                # Non-numeric residue (e.g. NaN literal). Keep the original
+                # string so downstream cleanup can decide what to do.
+                return cleaned
 
         self.df['Screen_To_Body_Ratio'] = self.df['Screen_To_Body_Ratio'].apply(remove_tilde_percent)
         self.df['Screen_To_Body_Ratio'].value_counts()
