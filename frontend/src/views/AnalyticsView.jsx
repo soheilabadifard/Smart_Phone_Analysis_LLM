@@ -40,6 +40,16 @@ function fmt(n, digits = 2) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: digits })
 }
 
+function ciTitleSuffix(rows) {
+  const alpha = rows && rows.length > 0 ? rows[0].alpha : 0.05
+  return `${Math.round((1 - alpha) * 100)}%`
+}
+
+function ciSubtitle(rows) {
+  const alpha = rows && rows.length > 0 ? rows[0].alpha : 0.05
+  return `α = ${alpha},`
+}
+
 function HistogramGrid({ data }) {
   // data: { columnName: [v1, v2, ...] }
   const cols = Object.keys(data)
@@ -332,7 +342,8 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
   const quant = useEndpoint(`/api/analytics/quantitative-distributions${q}`)
 
   // Section 3 — inferential stats (Estimation + HT1-HT6)
-  const priceCi = useEndpoint(`/api/analytics/price-ci-2023${q}`)
+  const priceCi = useEndpoint(`/api/analytics/price-ci-by-brand${q}`)
+  const batteryCi = useEndpoint(`/api/analytics/battery-ci-by-brand${q}`)
   const ht1 = useEndpoint(`/api/analytics/ht-price-by-sim-and-size${q}`)
   const ht2 = useEndpoint(`/api/analytics/ht-ppi-by-size${q}`)
   const ht3 = useEndpoint(`/api/analytics/ht-weight-android-vs-ios${q}`)
@@ -585,8 +596,11 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
 
       <h2>Inferential statistics</h2>
 
-      <ChartCard title="2023 average price by brand — 98% confidence interval"
-                 subtitle="Apple / Samsung / Huawei / Xiaomi / Nokia. α = 0.02, t-distribution.">
+      <ChartCard
+        title={`Average price by brand — ${ciTitleSuffix(priceCi.data)} confidence interval${
+          priceCi.data && priceCi.data[0]?.year != null ? ` (${priceCi.data[0].year})` : ''
+        }`}
+        subtitle={`Top-5 brands for the form factor. ${ciSubtitle(priceCi.data)} t-distribution.`}>
         {priceCi.data && (
           <Plot
             data={[{
@@ -604,6 +618,32 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
               textposition: 'outside',
             }]}
             layout={{ ...PLOTLY_LAYOUT, height: 400, yaxis: { title: 'price (€)' } }}
+            config={PLOTLY_CONFIG}
+            style={{ width: '100%' }}
+          />
+        )}
+      </ChartCard>
+
+      <ChartCard
+        title={`Average battery capacity by brand — ${ciTitleSuffix(batteryCi.data)} confidence interval`}
+        subtitle={`Top-5 brands for the form factor, all years pooled. ${ciSubtitle(batteryCi.data)} t-distribution.`}>
+        {batteryCi.data && (
+          <Plot
+            data={[{
+              type: 'bar',
+              x: batteryCi.data.map((d) => d.brand),
+              y: batteryCi.data.map((d) => d.mean ?? 0),
+              error_y: {
+                type: 'data',
+                symmetric: false,
+                array: batteryCi.data.map((d) => (d.upper ?? 0) - (d.mean ?? 0)),
+                arrayminus: batteryCi.data.map((d) => (d.mean ?? 0) - (d.lower ?? 0)),
+              },
+              marker: { color: '#62c699' },
+              text: batteryCi.data.map((d) => d.n != null && d.n > 0 ? `n=${d.n}` : 'n=0'),
+              textposition: 'outside',
+            }]}
+            layout={{ ...PLOTLY_LAYOUT, height: 400, yaxis: { title: 'battery (mAh)' } }}
             config={PLOTLY_CONFIG}
             style={{ width: '100%' }}
           />
