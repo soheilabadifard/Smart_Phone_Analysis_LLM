@@ -89,9 +89,11 @@ class TestInitialMessages:
 
 class TestPipelineRetry:
     @pytest.fixture(autouse=True)
-    def _patch_db(self, populated_engine):
-        """Force the populated_engine fixture to construct, which (per
-        conftest.py) also patches ro_engine in every module that imported it."""
+    def _patch_db(self, populated_engine, monkeypatch):
+        """Force the populated_engine fixture to construct (which patches
+        ro_engine), and disable result-review by default for the error-retry
+        tests below — they're testing the guard / DB-error path, not review."""
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         return populated_engine
 
     def test_first_try_success(self, monkeypatch):
@@ -180,3 +182,64 @@ class TestPipelineRetry:
         last_msg = captured[1][-1]
         assert last_msg["role"] == "user"
         assert "fail" in last_msg["content"].lower() or "error" in last_msg["content"].lower()
+
+
+class TestPipelineReview:
+    """Result-review (verification) loop — separate from the error-retry path."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_db(self, populated_engine, monkeypatch):
+        # Verification ON by default for these tests
+        monkeypatch.delenv("MLX_VERIFY_RESULTS", raising=False)
+        return populated_engine
+
+    def test_review_approves_first_result(self, monkeypatch):
+        responses = iter([
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            "OK",
+        ])
+        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+
+        result = llm_pipeline.answer_question("show a brand")
+        assert len(result.attempts) == 2
+        assert result.attempts[0].kind == "execution"
+        assert result.attempts[0].succeeded
+        assert result.attempts[1].kind == "review"
+        assert result.attempts[1].succeeded
+        assert result.attempts[1].judgment == "OK"
+
+    def test_review_refines_then_approves(self, monkeypatch):
+        responses = iter([
+            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",
+            "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",  # refinement
+            "OK",
+        ])
+        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+
+        result = llm_pipeline.answer_question("show brands")
+        # exec1 succeeded, review-refine, exec2 succeeded, review-approve = 4
+        assert len(result.attempts) == 4
+        assert result.sql == "SELECT brand FROM Device_Name LIMIT 2"
+        assert result.attempts[-1].judgment == "OK"
+
+    def test_oscillation_guard(self, monkeypatch):
+        responses = iter([
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # same as #1
+        ])
+        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+
+        result = llm_pipeline.answer_question("anything")
+        # Loop should detect the duplicate SQL and bail with last successful result.
+        assert any(a.judgment and "oscillation" in a.judgment for a in result.attempts)
+
+    def test_verify_off_skips_review(self, monkeypatch):
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setattr(
+            llm_pipeline, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+        result = llm_pipeline.answer_question("brands")
+        assert len(result.attempts) == 1
+        assert result.attempts[0].succeeded
