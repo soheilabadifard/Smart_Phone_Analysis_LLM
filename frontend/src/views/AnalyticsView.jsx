@@ -283,43 +283,47 @@ function HypothesisTestPanel({ data }) {
   )
 }
 
-export default function AnalyticsView() {
+export default function AnalyticsView({ formFactor = 'phone' }) {
+  // Every endpoint accepts ?form_factor=phone|watch|tablet|... so the same
+  // view renders charts scoped to whichever device class the user picked.
+  const q = `?form_factor=${encodeURIComponent(formFactor)}`
+
   // Section 1 — existing R-style summaries
-  const brand = useEndpoint('/api/analytics/brand-summary')
-  const annual = useEndpoint('/api/analytics/annual-launches')
-  const chipset = useEndpoint('/api/analytics/chipset-popularity')
-  const ram = useEndpoint('/api/analytics/ram-distribution')
-  const scatter = useEndpoint('/api/analytics/price-vs-battery')
+  const brand = useEndpoint(`/api/analytics/brand-summary${q}`)
+  const annual = useEndpoint(`/api/analytics/annual-launches${q}`)
+  const chipset = useEndpoint(`/api/analytics/chipset-popularity${q}`)
+  const ram = useEndpoint(`/api/analytics/ram-distribution${q}`)
+  const scatter = useEndpoint(`/api/analytics/price-vs-battery${q}`)
 
   // Section 2 — distributions, rankings, trends (Q1-Q8)
-  const network = useEndpoint('/api/analytics/network-technology')
-  const simType = useEndpoint('/api/analytics/sim-type-distribution')
-  const androidVer = useEndpoint('/api/analytics/top-android-versions')
-  const topExpensive = useEndpoint('/api/analytics/top-expensive-phones')
-  const ppiTrend = useEndpoint('/api/analytics/ppi-trend')
-  const corr = useEndpoint('/api/analytics/correlation-matrix')
-  const quant = useEndpoint('/api/analytics/quantitative-distributions')
+  const network = useEndpoint(`/api/analytics/network-technology${q}`)
+  const simType = useEndpoint(`/api/analytics/sim-type-distribution${q}`)
+  const androidVer = useEndpoint(`/api/analytics/top-android-versions${q}`)
+  const topExpensive = useEndpoint(`/api/analytics/top-expensive-phones${q}`)
+  const ppiTrend = useEndpoint(`/api/analytics/ppi-trend${q}`)
+  const corr = useEndpoint(`/api/analytics/correlation-matrix${q}`)
+  const quant = useEndpoint(`/api/analytics/quantitative-distributions${q}`)
 
   // Section 3 — inferential stats (Estimation + HT1-HT6)
-  const priceCi = useEndpoint('/api/analytics/price-ci-2023')
-  const ht1 = useEndpoint('/api/analytics/ht-price-by-sim-and-size')
-  const ht2 = useEndpoint('/api/analytics/ht-ppi-by-size')
-  const ht3 = useEndpoint('/api/analytics/ht-weight-android-vs-ios')
-  const ht4 = useEndpoint('/api/analytics/ht-battery-by-brand-and-size')
-  const ht5 = useEndpoint('/api/analytics/ht-price-by-brand-and-size')
-  const ht6 = useEndpoint('/api/analytics/ht-weight-by-size')
-  const ht7 = useEndpoint('/api/analytics/ht-battery-by-cpu')
-  const ht8 = useEndpoint('/api/analytics/ht-price-by-chipset')
-  const ht9 = useEndpoint('/api/analytics/ht-price-by-main-camera')
+  const priceCi = useEndpoint(`/api/analytics/price-ci-2023${q}`)
+  const ht1 = useEndpoint(`/api/analytics/ht-price-by-sim-and-size${q}`)
+  const ht2 = useEndpoint(`/api/analytics/ht-ppi-by-size${q}`)
+  const ht3 = useEndpoint(`/api/analytics/ht-weight-android-vs-ios${q}`)
+  const ht4 = useEndpoint(`/api/analytics/ht-battery-by-brand-and-size${q}`)
+  const ht5 = useEndpoint(`/api/analytics/ht-price-by-brand-and-size${q}`)
+  const ht6 = useEndpoint(`/api/analytics/ht-weight-by-size${q}`)
+  const ht7 = useEndpoint(`/api/analytics/ht-battery-by-cpu${q}`)
+  const ht8 = useEndpoint(`/api/analytics/ht-price-by-chipset${q}`)
+  const ht9 = useEndpoint(`/api/analytics/ht-price-by-main-camera${q}`)
 
   // Section 4 — OLS regression models (notebook cells 18, 74)
-  const olsSpecs = useEndpoint('/api/analytics/price-regression-specs')
-  const olsOs = useEndpoint('/api/analytics/price-regression-os')
-  const olsFull = useEndpoint('/api/analytics/price-regression-full')
+  const olsSpecs = useEndpoint(`/api/analytics/price-regression-specs${q}`)
+  const olsOs = useEndpoint(`/api/analytics/price-regression-os${q}`)
+  const olsFull = useEndpoint(`/api/analytics/price-regression-full${q}`)
 
   // Section 5 — residuals + feature selection
-  const residuals = useEndpoint('/api/analytics/price-residuals?model=full')
-  const featureSel = useEndpoint('/api/analytics/price-feature-selection')
+  const residuals = useEndpoint(`/api/analytics/price-residuals?model=full&form_factor=${encodeURIComponent(formFactor)}`)
+  const featureSel = useEndpoint(`/api/analytics/price-feature-selection${q}`)
 
   return (
     <div>
