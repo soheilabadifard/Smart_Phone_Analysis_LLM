@@ -4,6 +4,49 @@ import { humanizeColumnName } from '../utils/format.js'
 
 export { humanizeColumnName }
 
+function ErrorPanel({ error }) {
+  if (error.kind === 'plain') {
+    return <div className="error">{error.message}</div>
+  }
+  // pipeline_failure: render the structured attempt history.
+  return (
+    <div className="card" style={{ borderLeft: '3px solid #e07070' }}>
+      <h3 style={{ marginTop: 0, color: '#ffb3b3' }}>Ask pipeline gave up</h3>
+      <p style={{ marginTop: 0 }}>{error.message}</p>
+      {error.lastError && (
+        <p style={{ color: '#ffb3b3', fontSize: '0.9rem' }}>
+          Last error: <code>{error.lastError}</code>
+        </p>
+      )}
+      <details>
+        <summary style={{ cursor: 'pointer', color: '#9aa3ad' }}>
+          Show {error.attempts.length} attempt{error.attempts.length === 1 ? '' : 's'}
+        </summary>
+        {error.attempts.map((a, i) => (
+          <div key={i} style={{ marginTop: '0.6rem' }}>
+            <div style={{ color: '#9aa3ad', fontSize: '0.8rem' }}>
+              Attempt {i + 1}
+              <span style={{ marginLeft: '0.4rem', padding: '0.05rem 0.4rem', borderRadius: 4,
+                             background: a.kind === 'review' ? '#2a3a4a' : '#3a2a2a',
+                             color: a.kind === 'review' ? '#9bd1ff' : '#ffb3b3' }}>
+                {a.kind}
+              </span>
+            </div>
+            <pre className="sql" style={{ opacity: 0.7 }}>{a.sql}</pre>
+            {a.error && <div className="error" style={{ marginTop: '0.3rem' }}>{a.error}</div>}
+            {a.judgment && (
+              <div style={{ marginTop: '0.3rem', color: '#9bd1ff', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                LLM judgment: {a.judgment}
+              </div>
+            )}
+          </div>
+        ))}
+      </details>
+    </div>
+  )
+}
+
+
 function summariseAttempts(attempts) {
   const exec = attempts.filter((a) => a.kind !== 'review').length
   const review = attempts.filter((a) => a.kind === 'review').length
@@ -21,11 +64,67 @@ const SUGGESTIONS = [
   'Which chipset manufacturer dominates phones priced under 300 EUR?',
 ]
 
+// Process one NDJSON event from /api/ask/stream against the partial-answer
+// state. Returns the next answer state, or null if the event isn't relevant.
+function applyEvent(prev, ev) {
+  const base = prev || {
+    question: '', sql: '', columns: [], rows: [], attempts: [],
+    raw_llm_response: '', explanation: null, truncated: false,
+  }
+  switch (ev.type) {
+    case 'attempt':
+      return { ...base, attempts: [...base.attempts, ev.attempt] }
+    case 'executed':
+      // Render rows immediately so the user sees the result before the
+      // review/explanation turns finish.
+      return {
+        ...base,
+        sql: ev.sql,
+        columns: ev.columns,
+        rows: ev.rows,
+        truncated: !!ev.truncated,
+      }
+    case 'result':
+      // Replace state with the final accepted answer (carries explanation).
+      return {
+        question: ev.question, sql: ev.sql,
+        columns: ev.columns, rows: ev.rows,
+        attempts: ev.attempts || base.attempts,
+        raw_llm_response: ev.raw_llm_response,
+        explanation: ev.explanation,
+        truncated: !!ev.truncated,
+      }
+    default:
+      return null
+  }
+}
+
+
+async function* readNdjson(response) {
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (line.trim()) yield JSON.parse(line)
+    }
+  }
+  if (buffer.trim()) yield JSON.parse(buffer)
+}
+
+
 export default function AskView() {
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [sessionId, setSessionId] = useState(null)
+  const [streaming, setStreaming] = useState(false)
 
   const submit = async (e) => {
     e?.preventDefault()
@@ -33,14 +132,44 @@ export default function AskView() {
     setLoading(true)
     setError(null)
     setAnswer(null)
+    setStreaming(false)
+
+    const body = JSON.stringify({ question, session_id: sessionId })
+    const headers = { 'Content-Type': 'application/json' }
+
     try {
-      const res = await fetch('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
-      })
+      const res = await fetch('/api/ask/stream', { method: 'POST', headers, body })
+
+      // Streaming path: incremental NDJSON events.
+      if (res.ok && res.body && typeof res.body.getReader === 'function') {
+        setStreaming(true)
+        let partial = null
+        for await (const ev of readNdjson(res)) {
+          if (ev.type === 'session') {
+            setSessionId(ev.session_id)
+            continue
+          }
+          if (ev.type === 'error') {
+            setError({
+              kind: 'pipeline_failure',
+              message: ev.message,
+              lastError: ev.last_error || null,
+              attempts: ev.attempts || [],
+            })
+            continue
+          }
+          const next = applyEvent(partial, ev)
+          if (next) {
+            partial = next
+            setAnswer(next)
+          }
+        }
+        setStreaming(false)
+        return
+      }
+
+      // Fallback: legacy non-streaming response (or test mocks without body).
       const text = await res.text()
-      if (!res.ok) throw new Error(text)
       let parsed
       try {
         parsed = JSON.parse(text)
@@ -50,12 +179,41 @@ export default function AskView() {
           `First 200 chars: ${text.slice(0, 200)}`
         )
       }
+      if (!res.ok) {
+        const detail = parsed?.detail ?? parsed
+        if (detail && typeof detail === 'object' && Array.isArray(detail.attempts)) {
+          setError({
+            kind: 'pipeline_failure',
+            message: detail.message || 'The Ask pipeline failed.',
+            lastError: detail.last_error || null,
+            attempts: detail.attempts,
+          })
+          if (detail.session_id) setSessionId(detail.session_id)
+        } else {
+          setError({ kind: 'plain', message: typeof detail === 'string' ? detail : text })
+        }
+        return
+      }
       setAnswer(parsed)
+      if (parsed.session_id) setSessionId(parsed.session_id)
     } catch (err) {
-      setError(String(err))
+      setError({ kind: 'plain', message: String(err) })
     } finally {
       setLoading(false)
+      setStreaming(false)
     }
+  }
+
+  const resetSession = async () => {
+    if (!sessionId) return
+    try {
+      await fetch(`/api/ask/session/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    } catch (err) {
+      // best-effort; clear locally regardless
+    }
+    setSessionId(null)
+    setAnswer(null)
+    setError(null)
   }
 
   return (
@@ -86,12 +244,33 @@ export default function AskView() {
             </button>
           ))}
         </div>
-        <button className="primary" type="submit" disabled={loading}>
-          {loading ? 'Thinking…' : 'Ask'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginTop: '0.6rem' }}>
+          <button className="primary" type="submit" disabled={loading}>
+            {loading
+              ? (streaming ? 'Streaming…' : 'Thinking…')
+              : (sessionId ? 'Ask (continues conversation)' : 'Ask')}
+          </button>
+          {sessionId && (
+            <button
+              type="button"
+              onClick={resetSession}
+              style={{
+                background: 'transparent', border: '1px solid #444', color: '#9aa3ad',
+                padding: '0.3rem 0.7rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem',
+              }}
+            >
+              Reset conversation
+            </button>
+          )}
+          {sessionId && (
+            <span style={{ color: '#6a737d', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+              session: {sessionId.slice(0, 8)}…
+            </span>
+          )}
+        </div>
       </form>
 
-      {error && <div className="error">{error}</div>}
+      {error && <ErrorPanel error={error} />}
 
       {answer && (
         <>
@@ -133,7 +312,14 @@ export default function AskView() {
             )}
           </div>
           <div className="card">
-            <h3 style={{ marginTop: 0 }}>Result · {answer.rows.length} row{answer.rows.length === 1 ? '' : 's'}</h3>
+            <h3 style={{ marginTop: 0 }}>
+              Result · {answer.rows.length} row{answer.rows.length === 1 ? '' : 's'}
+              {answer.truncated && (
+                <span style={{ marginLeft: '0.6rem', fontSize: '0.78rem', color: '#f0c674' }}>
+                  · truncated to row cap
+                </span>
+              )}
+            </h3>
             {answer.explanation && (
               <div style={{
                 background: '#1d2531', border: '1px solid #2a3a4a',
