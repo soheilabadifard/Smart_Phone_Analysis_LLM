@@ -1,16 +1,27 @@
-"""NL → SQL pipeline with bounded self-correction.
+"""NL → SQL pipeline with bounded self-correction and result review.
 
 The model emits a candidate SQL. We:
   1. Parse + assert SELECT-only (sql_guard).
   2. Execute on the read-only MariaDB connection.
+  3. (Optional, on by default) Send the result preview back to the model and
+     ask whether it actually answers the question. The model either replies
+     `OK` (we accept and return) or emits a refined SQL in a fenced block.
 
-If either step fails, we append the assistant's failed turn and a user turn
-containing the error, then ask for a corrected query. We loop until it
-succeeds or we hit `max_attempts` (default 5, override via MLX_MAX_RETRIES).
+If guard / execution / refinement fails, we append the assistant's failed
+turn and a user turn containing the error or judgment, then ask again. We
+loop until the model signs off or we hit `max_attempts` (default 5,
+override via MLX_MAX_RETRIES).
 
-Empty result sets count as success — there is no automated signal for "this
-is the result the user wanted", so the only failure modes that drive a retry
-are guard rejections and DB execution errors.
+Empty result sets are treated as a valid answer when the model approves
+them, but the model is allowed to refine if it spots a fixable filter
+mistake. Oscillation guard: if the model emits a SQL we've already tried,
+we stop and accept the last successful result.
+
+The chat() call structure: one call before the loop produces the initial
+candidate, then each loop iteration runs guard + execute + (optionally)
+review. The review either approves (return) or emits a refinement which
+is consumed directly by the next iteration. So chat() is called once
+per round — never redundantly at the top of the loop.
 """
 
 import os
@@ -20,7 +31,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import ro_engine
-from app.llm.client import chat, extract_sql, initial_messages
+from app.llm.client import (
+    chat,
+    extract_sql,
+    format_result_preview,
+    has_fenced_sql,
+    initial_messages,
+    review_user_message,
+)
 from app.llm.sql_guard import UnsafeSQLError, ensure_select_only
 
 
@@ -29,6 +47,11 @@ class Attempt:
     sql: str
     error: str | None = None
     succeeded: bool = False
+    # 'execution' = SQL was guarded + run; 'review' = LLM was shown the result
+    # and either approved (succeeded=True with judgment text) or proposed a
+    # refinement (succeeded=False, judgment carries the model's reasoning).
+    kind: str = "execution"
+    judgment: str | None = None
 
 
 @dataclass
@@ -46,6 +69,17 @@ def _max_attempts() -> int:
         return max(1, int(os.getenv("MLX_MAX_RETRIES", "5")))
     except ValueError:
         return 5
+
+
+def _verify_results_enabled() -> bool:
+    return os.getenv("MLX_VERIFY_RESULTS", "true").lower() not in {"false", "0", "no"}
+
+
+def _preview_rows() -> int:
+    try:
+        return max(1, int(os.getenv("MLX_VERIFY_PREVIEW_ROWS", "10")))
+    except ValueError:
+        return 10
 
 
 def _retry_user_message(error: str) -> str:
@@ -66,46 +100,108 @@ def _execute(sql: str) -> tuple[list[str], list[dict]]:
 
 
 def answer_question(question: str) -> AskResult:
-    """Run the NL → SQL pipeline with self-correction. Always returns; the
-    caller inspects `result.attempts[-1].succeeded` to know if it gave up."""
+    """Run the NL → SQL pipeline with self-correction + result review.
+
+    Always returns; the caller inspects `result.attempts[-1].succeeded` to
+    know if we gave up.
+    """
 
     messages = initial_messages(question)
     attempts: list[Attempt] = []
-    last_raw = ""
     max_attempts = _max_attempts()
+    verify = _verify_results_enabled()
+    preview_rows = _preview_rows()
+
+    # Track SQLs we've already executed successfully — if the model refines
+    # to one of them we stop the review loop and keep the existing result.
+    seen_sqls: set[str] = set()
+    last_success: tuple[str, list[str], list[dict]] | None = None
+
+    # First chat call produces the initial candidate. Subsequent iterations
+    # either consume an error-retry response or a review-refinement directly,
+    # without calling chat() at the top.
+    last_raw = chat(messages)
 
     for _ in range(max_attempts):
-        last_raw = chat(messages)
         candidate = extract_sql(last_raw)
 
         try:
             safe_sql = ensure_select_only(candidate)
         except UnsafeSQLError as e:
             error = f"Refused unsafe SQL: {e}"
-            attempts.append(Attempt(sql=candidate, error=error))
+            attempts.append(Attempt(sql=candidate, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
+            last_raw = chat(messages)
             continue
 
         try:
             cols, rows = _execute(safe_sql)
         except SQLAlchemyError as e:
             error = f"{e.__class__.__name__}: {e}"
-            attempts.append(Attempt(sql=safe_sql, error=error))
+            attempts.append(Attempt(sql=safe_sql, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
+            last_raw = chat(messages)
             continue
 
-        attempts.append(Attempt(sql=safe_sql, succeeded=True))
-        return AskResult(
-            question=question,
-            sql=safe_sql,
-            columns=cols,
-            rows=rows,
-            attempts=attempts,
-            raw_llm_response=last_raw,
-        )
+        # Oscillation guard: if the model has refined to a SQL we've already
+        # executed, stop and accept the previous result.
+        if safe_sql in seen_sqls and last_success is not None:
+            prev_sql, prev_cols, prev_rows = last_success
+            attempts.append(Attempt(
+                sql=safe_sql, succeeded=True, kind="review",
+                judgment="(oscillation guard) model re-emitted a previous query; accepting prior result",
+            ))
+            return AskResult(
+                question=question,
+                sql=prev_sql, columns=prev_cols, rows=prev_rows,
+                attempts=attempts, raw_llm_response=last_raw,
+            )
+        seen_sqls.add(safe_sql)
+        last_success = (safe_sql, cols, rows)
 
+        attempts.append(Attempt(sql=safe_sql, succeeded=True, kind="execution"))
+
+        if not verify:
+            return AskResult(
+                question=question, sql=safe_sql, columns=cols, rows=rows,
+                attempts=attempts, raw_llm_response=last_raw,
+            )
+
+        # Verification on: ask the model to judge the result.
+        messages.append({"role": "assistant", "content": last_raw})
+        preview = format_result_preview(cols, rows, max_rows=preview_rows)
+        messages.append({"role": "user",
+                         "content": review_user_message(question, safe_sql, preview)})
+
+        review_raw = chat(messages)
+        if not has_fenced_sql(review_raw):
+            attempts.append(Attempt(
+                sql=safe_sql, succeeded=True, kind="review",
+                judgment=review_raw.strip()[:500],
+            ))
+            return AskResult(
+                question=question, sql=safe_sql, columns=cols, rows=rows,
+                attempts=attempts, raw_llm_response=review_raw,
+            )
+
+        # Refinement: log the judgment and feed the refined SQL into the next
+        # loop iteration directly (no extra chat() call at the top).
+        attempts.append(Attempt(
+            sql=safe_sql, succeeded=False, kind="review",
+            judgment=review_raw.strip()[:500],
+        ))
+        messages.append({"role": "assistant", "content": review_raw})
+        last_raw = review_raw
+
+    # Hit max_attempts. Return the last successful result if we have one.
+    if last_success is not None:
+        prev_sql, prev_cols, prev_rows = last_success
+        return AskResult(
+            question=question, sql=prev_sql, columns=prev_cols, rows=prev_rows,
+            attempts=attempts, raw_llm_response=last_raw,
+        )
     return AskResult(
         question=question,
         sql=attempts[-1].sql if attempts else "",
