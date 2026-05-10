@@ -26,6 +26,46 @@ USD_TO_EUR = 0.93
 GBP_TO_EUR = 1.17
 INR_TO_EUR = 0.011
 
+_FX_RATES = {
+    'EUR': 1.0,
+    'USD': USD_TO_EUR,
+    'GBP': GBP_TO_EUR,
+    'INR': INR_TO_EUR,
+}
+
+_PRICE_PATTERNS = {
+    'EUR': re.compile(r'(?:About\s)?\€\s*(\d{1,3}(?:,\d{3})*\.?\d*)|(?:About\s)?(\d{1,3}(?:,\d{3})*\.?\d*)\s*EUR'),
+    'USD': re.compile(r'(?:About\s)?\$\s*(\d{1,3}(?:,\d{3})*\.?\d*)'),
+    'GBP': re.compile(r'(?:About\s)?£\s*(\d{1,3}(?:,\d{3})*\.?\d*)'),
+    'INR': re.compile(r'(?:About\s)?₹\s*(\d{1,3}(?:,\d{3})*\.?\d*)|(?:About\s)?(\d{1,3}(?:,\d{3})*\.?\d*)\s*INR'),
+}
+
+
+def _extract_price_per_currency(raw):
+    """Pull every recognised currency value out of a Misc_Price string.
+
+    Returns a dict {currency: float}. The previous implementation reassigned
+    the loop variable on each match (`price = match.group(1) or ...`), which
+    meant subsequent currencies searched the captured digit string instead
+    of the original — silently dropping later currencies on multi-currency
+    rows. This version always searches the original string.
+    """
+    if not isinstance(raw, str):
+        return {}
+    out = {}
+    for currency, pattern in _PRICE_PATTERNS.items():
+        match = pattern.search(raw)
+        if match is None:
+            continue
+        digits = match.group(1) or match.group(2)
+        if not digits:
+            continue
+        try:
+            out[currency] = float(digits.replace(',', ''))
+        except (ValueError, TypeError):
+            pass
+    return out
+
 DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -537,49 +577,81 @@ class DataPreProcess:
         return storage, ram
 
     def clean_and_extract_price(self):
-        def clean_price(price):
-            if pd.isna(price):
-                return None, None, None, None, None
+        """Resolve Misc_Price to a single Price_EUR per row.
 
-            regex_patterns = {
-                'EUR': r'(?:About\s)?\€\s*(\d{1,3}(?:,\d{3})*\.?\d*)|(?:About\s)?(\d{1,3}(?:,\d{3})*\.?\d*)\s*EUR',
-                'USD': r'(?:About\s)?\$\s*(\d{1,3}(?:,\d{3})*\.?\d*)',
-                'GBP': r'(?:About\s)?£\s*(\d{1,3}(?:,\d{3})*\.?\d*)',
-                'INR': r'(?:About\s)?₹\s*(\d{1,3}(?:,\d{3})*\.?\d*)|(?:About\s)?(\d{1,3}(?:,\d{3})*\.?\d*)\s*INR'
-            }
-            price_eur, price_usd, price_gbp, price_inr, price_other = None, None, None, None, None
-            for currency, pattern in regex_patterns.items():
-                match = re.search(pattern, price)
-                if match:
-                    price = match.group(1) or match.group(2)
-                    if price:
-                        price = price.replace(',', '')
-                        if currency == 'EUR':
-                            price_eur = float(price)
-                        elif currency == 'USD':
-                            price_usd = float(price)
-                        elif currency == 'GBP':
-                            price_gbp = float(price)
-                        elif currency == 'INR':
-                            price_inr = float(price)
-            if not any([price_eur, price_usd, price_gbp, price_inr]):
-                match = re.search(r'(\d{1,3}(?:,\d{3})*\.?\d*)', price)
-                if match:
-                    price_other = float(match.group(1).replace(',', ''))
+        Preference order: native EUR > USD > GBP > INR. The first match in
+        this order becomes Price_EUR (FX-converted via _FX_RATES if it isn't
+        already EUR). Multi-currency rows like '€800 / $899' use the EUR
+        figure directly without any conversion. Rows without any recognised
+        currency stay NaN — the previous Price_Other fallback was extracted
+        but immediately dropped, so we skip it.
 
-            return price_eur, price_usd, price_gbp, price_inr, price_other
+        Prints a per-currency conversion summary so a stale FX rate or
+        regex regression is visible at a glance.
+        """
+        counter = {'EUR-native': 0, 'from USD': 0, 'from GBP': 0, 'from INR': 0,
+                   'unrecognised': 0, 'missing': 0}
 
-        extracted_prices = self.df['Misc_Price'].apply(lambda x: clean_price(x))
-        self.df['Price_EUR'], self.df['Price_USD'], self.df['Price_GBP'], self.df['Price_INR'], self.df[
-            'Price_Other'] = zip(*extracted_prices)
-        for index, row in self.df.iterrows():
-            if pd.isna(row['Price_EUR']):
-                if not pd.isna(row['Price_USD']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_USD'] * USD_TO_EUR
-                elif not pd.isna(row['Price_GBP']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_GBP'] * GBP_TO_EUR
-                elif not pd.isna(row['Price_INR']):
-                    self.df.at[index, 'Price_EUR'] = row['Price_INR'] * INR_TO_EUR
+        def per_row(raw):
+            if pd.isna(raw):
+                counter['missing'] += 1
+                return None
+            extracted = _extract_price_per_currency(raw)
+            if 'EUR' in extracted:
+                counter['EUR-native'] += 1
+                return extracted['EUR']
+            for currency in ('USD', 'GBP', 'INR'):
+                if currency in extracted:
+                    counter[f'from {currency}'] += 1
+                    return extracted[currency] * _FX_RATES[currency]
+            counter['unrecognised'] += 1
+            return None
+
+        self.df['Price_EUR'] = self.df['Misc_Price'].apply(per_row)
+
+        summary = ', '.join(f'{n} {label}' for label, n in counter.items() if n)
+        print(f"clean_and_extract_price: {summary}", file=sys.stderr)
+
+    def impute_missing_prices(self):
+        """Cascade-fill NaN Price_EUR with within-model → brand×year → brand
+        medians. Imputed values overwrite NaN in Price_EUR directly — there
+        is no marker column distinguishing native from imputed prices, so
+        downstream analytics treat them identically. Documented in CLAUDE.md.
+
+        All medians are computed from the *original* priced rows once at the
+        start; we never recurse on imputed values to avoid bias drift.
+        """
+        priced = self.df[self.df['Price_EUR'].notna()]
+        model_means = priced.groupby('model')['Price_EUR'].mean()
+
+        by_grouped = priced.groupby(['brand', 'year'])['Price_EUR'].agg(['median', 'count'])
+        by_medians = by_grouped[by_grouped['count'] >= 3]['median']
+
+        brand_grouped = priced.groupby('brand')['Price_EUR'].agg(['median', 'count'])
+        brand_medians = brand_grouped[brand_grouped['count'] >= 5]['median']
+
+        counter = {'within_model': 0, 'brand_year': 0, 'brand_only': 0}
+        for idx in self.df.index[self.df['Price_EUR'].isna()]:
+            model = self.df.at[idx, 'model']
+            brand = self.df.at[idx, 'brand']
+            year = self.df.at[idx, 'year']
+            if model in model_means.index:
+                self.df.at[idx, 'Price_EUR'] = float(model_means[model])
+                counter['within_model'] += 1
+            elif (brand, year) in by_medians.index:
+                self.df.at[idx, 'Price_EUR'] = float(by_medians[(brand, year)])
+                counter['brand_year'] += 1
+            elif brand in brand_medians.index:
+                self.df.at[idx, 'Price_EUR'] = float(brand_medians[brand])
+                counter['brand_only'] += 1
+
+        still_missing = int(self.df['Price_EUR'].isna().sum())
+        print(
+            f"impute_missing_prices: {counter['within_model']} within-model, "
+            f"{counter['brand_year']} brand×year, {counter['brand_only']} brand-only, "
+            f"{still_missing} still NaN",
+            file=sys.stderr,
+        )
 
     def _extract_with_regex(self, text, pattern):
         if pd.isna(text):
@@ -611,8 +683,7 @@ class DataPreProcess:
                 'Battery_Music play', 'Platform', 'Memory_Phonebook', 'Memory_Call records',
                 'Features_Messaging', 'Features_Games', 'Features_Java', 'Misc_SAR EU', 'Body_Keyboard',
                 'Features_Browser', 'Sound_Alert types', 'Features_Clock', 'Features_Alarm', 'Features_Languages',
-                'Price_USD',
-                'Price_GBP', 'Price_INR', 'Price_Other'])
+            ])
 
     def save_processed_data(self, file_name=str(DATA_DIR / 'processed_data.csv')):
         # Save the processed DataFrame to a CSV file
@@ -673,6 +744,9 @@ class DataPreProcess:
         self.final_adjustments()
         self.year_to_int()
         self.canonicalize_brand()
+        # Imputation must run AFTER canonicalize_brand so groupby keys are
+        # consistent (e.g. 'alcatel' and 'Alcatel' don't form separate clusters).
+        self.impute_missing_prices()
         return self.df
 
 
