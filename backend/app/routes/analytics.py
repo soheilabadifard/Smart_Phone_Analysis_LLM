@@ -668,42 +668,100 @@ def quantitative_distributions(form_factor: FormFactor = "phone") -> dict:
 # ===========================================================================
 
 
-@router.get("/price-ci-2023")
-def price_ci_2023(alpha: float = 0.02, form_factor: FormFactor = "phone") -> list[dict]:
-    """Estimation — per-brand price 98% CI for 2023 across the top-5 brands
-    of the given form factor. Uses parametric t-distribution CI."""
+def _t_ci_per_brand(
+    column: str,
+    alpha: float,
+    form_factor: str,
+    year: int | None = None,
+) -> list[dict]:
+    """Parametric t-distribution CI for `column` across the top-5 brands.
+
+    `column` must be a quantitative column on `Device` (e.g. price_eur,
+    battery_capacity_mah). When `year` is None, all rows for the form factor
+    are pooled; otherwise only rows for that year are used.
+    """
     brands = _top_brands(form_factor, 5)
     if not brands:
         return []
     brand_list = ", ".join(f"'{b.replace(chr(39), chr(39) * 2)}'" for b in brands)
+    year_filter = f" AND d.year = {int(year)}" if year is not None else ""
     df = _df(
         f"""
-        SELECT dn.brand, d.price_eur
+        SELECT dn.brand, d.{column} AS value
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
-        WHERE {_form_filter(form_factor)} AND d.year = 2023 AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)}{year_filter}
+          AND d.{column} IS NOT NULL
           AND dn.brand IN ({brand_list})
         """
     )
     out: list[dict] = []
     for brand in brands:
-        group = df.loc[df['brand'] == brand, 'price_eur'].dropna().to_numpy()
+        group = df.loc[df['brand'] == brand, 'value'].dropna().to_numpy()
         n = len(group)
-        if n < 2:
-            out.append({"brand": brand, "n": n, "mean": None, "std": None,
-                        "lower": None, "upper": None, "alpha": alpha})
-            continue
-        mean = float(np.mean(group))
-        std = float(np.std(group, ddof=1))
-        t_score = float(stats.t.ppf(1 - alpha / 2, df=n - 1))
-        margin = t_score * std / np.sqrt(n)
-        out.append({
-            "brand": brand, "n": n,
-            "mean": round(mean, 2), "std": round(std, 2),
-            "lower": round(mean - margin, 2), "upper": round(mean + margin, 2),
-            "alpha": alpha,
-        })
+        row: dict[str, Any] = {
+            "brand": brand, "n": n, "alpha": alpha,
+            "mean": None, "std": None, "lower": None, "upper": None,
+        }
+        if year is not None:
+            row["year"] = int(year)
+        if n >= 2:
+            mean = float(np.mean(group))
+            std = float(np.std(group, ddof=1))
+            t_score = float(stats.t.ppf(1 - alpha / 2, df=n - 1))
+            margin = t_score * std / np.sqrt(n)
+            row.update({
+                "mean": round(mean, 2),
+                "std": round(std, 2),
+                "lower": round(mean - margin, 2),
+                "upper": round(mean + margin, 2),
+            })
+        out.append(row)
     return out
+
+
+def _resolve_year(year: int | None, form_factor: str) -> int | None:
+    """If `year` is None, pick the most-recent year present for the form
+    factor. Returns None only when the form factor has no rows at all.
+    """
+    if year is not None:
+        return int(year)
+    df = _df(
+        f"SELECT MAX(d.year) AS y FROM Device d WHERE {_form_filter(form_factor)}"
+    )
+    if df.empty or df["y"].isna().all():
+        return None
+    return int(df["y"].iloc[0])
+
+
+@router.get("/price-ci-by-brand")
+def price_ci_by_brand(
+    year: int | None = None,
+    alpha: float = 0.05,
+    form_factor: FormFactor = "phone",
+) -> list[dict]:
+    """Estimation — per-brand price CI for one year across the top-5 brands.
+
+    `year` defaults to the most-recent year present for the given form factor.
+    `alpha` defaults to 0.05 (95% CI), matching the rest of the endpoints.
+    """
+    resolved = _resolve_year(year, form_factor)
+    if resolved is None:
+        return []
+    return _t_ci_per_brand("price_eur", alpha, form_factor, year=resolved)
+
+
+@router.get("/battery-ci-by-brand")
+def battery_ci_by_brand(
+    alpha: float = 0.05,
+    form_factor: FormFactor = "phone",
+) -> list[dict]:
+    """Estimation — per-brand battery-capacity (mAh) CI across the top-5 brands.
+
+    No year filter: battery capacity is comparatively stable across release
+    years, so pooling all rows for the form factor gives the tightest interval.
+    """
+    return _t_ci_per_brand("battery_capacity_mah", alpha, form_factor)
 
 
 def _ht_response(name: str, description: str, test_block: dict,
