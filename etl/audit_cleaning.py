@@ -139,7 +139,7 @@ def audit_all():
 
     _safe(fallthrough, df_before, df_after, 'Body_Weight', 'weight')
 
-    _safe(fallthrough, df_before, df_after, 'Battery_Type', 'Battery_capactiy')
+    _safe(fallthrough, df_before, df_after, 'Battery_Type', 'Battery_capacity')
 
     _safe(fallthrough, df_before, df_after, 'Body_SIM', 'SIM_type')
     _safe(fallthrough, df_before, df_after, 'Body_SIM', 'SIM_count')
