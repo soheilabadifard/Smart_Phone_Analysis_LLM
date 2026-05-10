@@ -147,12 +147,11 @@ describe('AskView', () => {
     await user.click(screen.getByText(/Show 1 earlier attempt/))
   })
 
-  it('shows error banner on backend failure', async () => {
+  it('renders a plain string error when the backend returns a simple detail', async () => {
     global.fetch = vi.fn(async () => ({
       ok: false,
       status: 400,
       text: async () => '{"detail":"bad"}',
-      json: async () => ({ detail: 'bad' }),
     }))
 
     const user = userEvent.setup()
@@ -163,5 +162,88 @@ describe('AskView', () => {
     await waitFor(() => {
       expect(screen.getByText(/bad/)).toBeInTheDocument()
     })
+  })
+
+  it('consumes an NDJSON stream from /api/ask/stream and renders incrementally', async () => {
+    // Mock the streaming response: the body is a ReadableStream that yields
+    // attempt → executed → result → session events as separate chunks.
+    const enc = new TextEncoder()
+    const events = [
+      { type: 'attempt', index: 0, attempt: { sql: 'SELECT brand FROM Device_Name', error: null, succeeded: true, kind: 'execution', judgment: null } },
+      { type: 'executed', sql: 'SELECT brand FROM Device_Name', columns: ['brand'], rows: [{ brand: 'Apple' }], truncated: false },
+      { type: 'result', question: 'q', sql: 'SELECT brand FROM Device_Name', columns: ['brand'], rows: [{ brand: 'Apple' }], attempts: [], raw_llm_response: 'OK', explanation: 'Just one brand.', truncated: false },
+      { type: 'session', session_id: 'abc-123-def-456' },
+    ]
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const ev of events) controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'))
+        controller.close()
+      },
+    })
+    global.fetch = vi.fn(async () => ({ ok: true, status: 200, body: stream }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    await waitFor(() => screen.getByText(/Just one brand/i))
+    expect(screen.getByText(/Generated SQL/i)).toBeInTheDocument()
+    expect(screen.getByText('Apple')).toBeInTheDocument()
+    // Session is now active — the button label changes and a reset appears.
+    expect(screen.getByRole('button', { name: /Ask \(continues conversation\)/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Reset conversation/i })).toBeInTheDocument()
+    expect(screen.getByText(/session: abc-123-/)).toBeInTheDocument()
+  })
+
+  it('renders a truncated-row notice when the backend reports truncation', async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          question: 'q', sql: 'SELECT 1', columns: ['x'], rows: [{ x: 1 }],
+          attempts: [{ sql: 'SELECT 1', succeeded: true, kind: 'execution' }],
+          raw_llm_response: '', truncated: true, session_id: 'sid',
+        }),
+    }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    await waitFor(() => screen.getByText(/truncated to row cap/i))
+  })
+
+  it('renders the structured pipeline-failure panel with attempt history', async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            message: 'LLM failed to produce a runnable query after 2 attempts.',
+            last_error: 'Refused unsafe SQL: Only SELECT…',
+            attempts: [
+              { sql: 'DROP TABLE Device', error: 'Refused unsafe SQL', succeeded: false, kind: 'execution' },
+              { sql: 'TRUNCATE Device', error: 'Refused unsafe SQL', succeeded: false, kind: 'execution' },
+            ],
+          },
+        }),
+    }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'attack')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    await waitFor(() => screen.getByText(/Ask pipeline gave up/i))
+    expect(screen.getByText(/LLM failed to produce/i)).toBeInTheDocument()
+    expect(screen.getByText(/Show 2 attempts/i)).toBeInTheDocument()
+    // The structured panel renders each attempt's SQL.
+    await user.click(screen.getByText(/Show 2 attempts/i))
+    expect(screen.getByText(/DROP TABLE Device/)).toBeInTheDocument()
+    expect(screen.getByText(/TRUNCATE Device/)).toBeInTheDocument()
   })
 })
