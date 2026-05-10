@@ -17,7 +17,7 @@ MariaDB SELECT query.
 RULES:
 - Output exactly ONE SQL statement, a SELECT (or WITH ... SELECT).
 - Wrap the SQL in a ```sql fenced code block. No prose around it.
-- Never use INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, or MERGE.
+- Never use INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, MERGE, or REPLACE.
 - Always LIMIT results to at most 100 rows unless the user explicitly asks for more.
 - Prefer readable column aliases (AS brand, AS avg_price_eur, ...).
 - Filter NULLs out of aggregates and ORDER BY columns where they would skew results.
@@ -48,10 +48,20 @@ def _client() -> OpenAI:
 
 
 _SQL_FENCE = re.compile(r"```(?:sql)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+# Stricter pattern that requires the explicit `sql` language tag. Used by the
+# review loop to decide whether the assistant emitted a refinement — a bare
+# ``` block with prose inside should NOT be treated as SQL.
+_SQL_FENCE_TAGGED = re.compile(r"```sql\s+(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 def extract_sql(response_text: str) -> str:
-    m = _SQL_FENCE.search(response_text)
+    """Pull the SQL out of the assistant response.
+
+    Lenient on purpose: tries ```sql first, then bare ```, then falls back to
+    the whole text. The guard rejects whatever we hand it if it isn't a real
+    SELECT, so leniency here just gives the model more shots at being parsed.
+    """
+    m = _SQL_FENCE_TAGGED.search(response_text) or _SQL_FENCE.search(response_text)
     if m:
         return m.group(1).strip().rstrip(";").strip()
     return response_text.strip().rstrip(";").strip()
@@ -60,10 +70,11 @@ def extract_sql(response_text: str) -> str:
 def has_fenced_sql(response_text: str) -> bool:
     """True if the assistant response contains a ```sql … ``` block.
 
-    Used by the review loop to distinguish approval (no fence) from a
-    refinement (fenced SQL).
+    Used by the review loop to distinguish approval (no fence or a bare
+    ``` block with prose) from a refinement (explicitly ```sql tagged).
+    Stricter than `extract_sql` on purpose.
     """
-    return _SQL_FENCE.search(response_text) is not None
+    return _SQL_FENCE_TAGGED.search(response_text) is not None
 
 
 def format_result_preview(columns: list[str], rows: list[dict],
