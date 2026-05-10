@@ -1,5 +1,9 @@
 import { useState } from 'react'
 
+import { humanizeColumnName } from '../utils/format.js'
+
+export { humanizeColumnName }
+
 function summariseAttempts(attempts) {
   const exec = attempts.filter((a) => a.kind !== 'review').length
   const review = attempts.filter((a) => a.kind === 'review').length
@@ -9,39 +13,6 @@ function summariseAttempts(attempts) {
   return parts.join(', ')
 }
 
-// Map of lowercase tokens → canonical casing for acronyms / unit suffixes
-// that should not be title-cased ("eur" → "EUR", not "Eur"). Extend as the
-// LLM aliases new vocabulary.
-const COLUMN_CASING = {
-  // Currencies
-  eur: 'EUR', usd: 'USD', gbp: 'GBP', inr: 'INR',
-  // Units
-  mah: 'mAh', gb: 'GB', mb: 'MB', tb: 'TB', kb: 'KB',
-  cm: 'cm', mm: 'mm', kg: 'kg', ml: 'ml',
-  // Tech
-  ram: 'RAM', cpu: 'CPU', gpu: 'GPU', os: 'OS', ppi: 'PPI', sim: 'SIM',
-  rom: 'ROM', id: 'ID', url: 'URL', api: 'API', sql: 'SQL',
-  // Network generations / standards
-  '2g': '2G', '3g': '3G', '4g': '4G', '5g': '5G',
-  cdma: 'CDMA', gsm: 'GSM', lte: 'LTE', hspa: 'HSPA', evdo: 'EVDO',
-}
-
-export function humanizeColumnName(name) {
-  if (!name) return name
-  // If it's already mixed-case (e.g. an alias the LLM wrote as "Brand Name"),
-  // leave it alone. Only transform snake_case / all-lowercase names.
-  if (!/_/.test(name) && /[A-Z]/.test(name)) return name
-  return name
-    .replace(/_/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => {
-      const lower = word.toLowerCase()
-      if (lower in COLUMN_CASING) return COLUMN_CASING[lower]
-      return lower.charAt(0).toUpperCase() + lower.slice(1)
-    })
-    .join(' ')
-}
 
 const SUGGESTIONS = [
   'Which 5 brands have the highest average phone price?',
@@ -70,7 +41,16 @@ export default function AskView() {
       })
       const text = await res.text()
       if (!res.ok) throw new Error(text)
-      setAnswer(JSON.parse(text))
+      let parsed
+      try {
+        parsed = JSON.parse(text)
+      } catch (parseErr) {
+        throw new Error(
+          `Backend returned a response that wasn't JSON (${parseErr.message}). ` +
+          `First 200 chars: ${text.slice(0, 200)}`
+        )
+      }
+      setAnswer(parsed)
     } catch (err) {
       setError(String(err))
     } finally {
