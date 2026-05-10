@@ -31,6 +31,7 @@ class AskResponse(BaseModel):
     rows: list[dict]
     attempts: list[AttemptOut]
     raw_llm_response: str
+    explanation: str | None = None
 
 
 def _to_out(a) -> AttemptOut:
@@ -63,4 +64,5 @@ def ask(req: AskRequest) -> AskResponse:
         rows=result.rows,
         attempts=[_to_out(a) for a in result.attempts],
         raw_llm_response=result.raw_llm_response,
+        explanation=result.explanation,
     )
