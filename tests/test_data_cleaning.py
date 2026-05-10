@@ -473,10 +473,143 @@ class TestCurrencyConversion:
         out = self._run(["£ 849.00"])
         assert out["Price_EUR"].iloc[0] == pytest.approx(849.0 * GBP_TO_EUR)
 
-    def test_unparseable_currency_uses_other(self):
+    def test_unparseable_currency_stays_nan(self):
         out = self._run(["1234.56"])
-        # No currency symbol → falls into Price_Other, so Price_EUR stays NaN
+        # No recognised currency symbol → Price_EUR is NaN.
+        # (Previously the cleaner extracted this into a Price_Other column
+        # which was immediately dropped — dead code, removed 2026-05-10.)
         assert pd.isna(out["Price_EUR"].iloc[0])
+
+    def test_intermediate_columns_not_emitted(self):
+        """Refactor 2026-05-10: Price_USD/GBP/INR/Other are no longer added
+        to the DataFrame as intermediate columns — only Price_EUR survives."""
+        out = self._run(["About 800 EUR"])
+        assert "Price_EUR" in out.columns
+        for col in ("Price_USD", "Price_GBP", "Price_INR", "Price_Other"):
+            assert col not in out.columns, f"intermediate column {col!r} should not be emitted"
+
+    def test_eur_preferred_over_other_currencies_on_multi_row(self):
+        """Multi-currency rows like '€800 / $899 / £729 / ₹74,999' should
+        store the native EUR figure with no conversion applied."""
+        out = self._run(["€ 800 / $ 899 / £ 729 / ₹ 74,999"])
+        assert out["Price_EUR"].iloc[0] == 800.0  # exact, not 899 * USD_TO_EUR
+
+    def test_loop_variable_bug_regression(self):
+        """Earlier the cleaner reassigned the loop variable to the captured
+        digit string, so `re.search(pattern, price)` on the next iteration
+        searched '549' instead of the original. A USD-only row whose extracted
+        digits accidentally match another regex would silently misclassify.
+        Verify EUR is correctly identified even when the row also contains
+        currency-shaped digits in a non-recognised position."""
+        out = self._run(["Listed at $549 (was £499). About 600 EUR"])
+        # Now that we always search the original string: EUR is recognised
+        # and preferred — Price_EUR should be 600 exactly.
+        assert out["Price_EUR"].iloc[0] == 600.0
+
+
+class TestPriceImputation:
+    """Cascade fills NaN Price_EUR with within-model → brand×year → brand."""
+
+    def test_within_model_uses_priced_sibling(self):
+        # Two configs of the same model; one priced, one NaN.
+        df = pd.DataFrame({
+            "brand": ["Apple", "Apple"],
+            "model": ["iPhone 15", "iPhone 15"],
+            "year": [2023, 2023],
+            "Price_EUR": [800.0, None],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        assert proc.df["Price_EUR"].tolist() == [800.0, 800.0]
+
+    def test_brand_year_median_when_no_model_match(self):
+        # Three priced same-brand-same-year phones + one NaN.
+        df = pd.DataFrame({
+            "brand": ["Samsung"] * 4,
+            "model": ["A", "B", "C", "Mystery"],
+            "year": [2024, 2024, 2024, 2024],
+            "Price_EUR": [400.0, 500.0, 600.0, None],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        # Median of [400, 500, 600] = 500 → fills "Mystery"
+        assert proc.df.loc[3, "Price_EUR"] == 500.0
+
+    def test_brand_only_fallback(self):
+        # 5 same-brand priced phones (across years), one NaN in a year with no neighbours.
+        df = pd.DataFrame({
+            "brand": ["Xiaomi"] * 6,
+            "model": list("ABCDEF"),
+            "year": [2020, 2020, 2021, 2021, 2022, 2099],
+            "Price_EUR": [200.0, 300.0, 400.0, 500.0, 600.0, None],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        # 2099 has no priced sibling — falls back to brand-only median
+        # = median of [200, 300, 400, 500, 600] = 400
+        assert proc.df.loc[5, "Price_EUR"] == 400.0
+
+    def test_orphan_brand_stays_nan(self):
+        # Brand has only one priced phone (< 5 needed for fallback).
+        df = pd.DataFrame({
+            "brand": ["Obscure", "Obscure"],
+            "model": ["X", "Y"],
+            "year": [2020, 2020],
+            "Price_EUR": [123.0, None],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        # Within-model misses (different models), brand×year misses (count<3),
+        # brand-only misses (count<5) → stays NaN.
+        assert pd.isna(proc.df.loc[1, "Price_EUR"])
+
+    def test_cascade_priority_within_model_wins(self):
+        # Both within-model and brand×year would fill, but within-model wins.
+        df = pd.DataFrame({
+            "brand": ["Apple"] * 5,
+            "model": ["iPhone 15", "iPhone 15", "Watch", "Pad", "AirPods"],
+            "year": [2023, 2023, 2023, 2023, 2023],
+            "Price_EUR": [800.0, None, 400.0, 1200.0, 200.0],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        # Within-model uses the priced sibling = 800. (Brand×year median
+        # of [800, 400, 1200, 200] = 600, which is NOT what we expect.)
+        assert proc.df.loc[1, "Price_EUR"] == 800.0
+
+    def test_imputation_does_not_overwrite_native_prices(self):
+        df = pd.DataFrame({
+            "brand": ["Apple"] * 4,
+            "model": ["A", "B", "C", "D"],
+            "year": [2023] * 4,
+            "Price_EUR": [800.0, 900.0, 1000.0, 700.0],
+        })
+        proc = DataPreProcess(df)
+        before = proc.df["Price_EUR"].tolist()
+        proc.impute_missing_prices()
+        # Nothing should change — no NaNs to fill.
+        assert proc.df["Price_EUR"].tolist() == before
+
+    def test_imputation_uses_only_native_prices(self):
+        """Brand×year median must be computed from the *original* priced
+        rows, not from imputed values added in step 1. Otherwise step-2
+        medians drift."""
+        # Brand-A iPhone 15 priced at 800, sibling NaN → step 1 fills 800.
+        # Brand-A 2024 cluster has 3 other priced rows with median 500.
+        # The "Mystery" 2024 row should get 500 (brand-year), NOT something
+        # influenced by the within-model fill.
+        df = pd.DataFrame({
+            "brand": ["Apple"] * 6,
+            "model": ["iPhone 15", "iPhone 15", "X", "Y", "Z", "Mystery"],
+            "year": [2024] * 6,
+            "Price_EUR": [800.0, None, 400.0, 500.0, 600.0, None],
+        })
+        proc = DataPreProcess(df)
+        proc.impute_missing_prices()
+        # Index 1: within-model match → 800
+        # Index 5: brand×year median of original [800, 400, 500, 600] = 550
+        assert proc.df.loc[1, "Price_EUR"] == 800.0
+        assert proc.df.loc[5, "Price_EUR"] == 550.0
 
 
 # ---------------------------------------------------------------------------

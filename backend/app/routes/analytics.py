@@ -496,16 +496,31 @@ def top_android_versions(limit: int = 10) -> list[dict]:
 
 @router.get("/top-expensive-phones")
 def top_expensive_phones(limit: int = 50) -> list[dict]:
-    """Q5 — Top-N most expensive phones with their OS."""
+    """Q5 — Top-N most expensive phones with their OS.
+
+    `Device` is per-configuration (a phone with 3 storage tiers is 3 rows),
+    so a naive `ORDER BY price LIMIT N` produces duplicate model rows.
+    The window function picks the most-expensive config of each
+    (brand, model) and ranks across those representatives.
+    """
     return _rows(
         f"""
-        SELECT dn.brand, dn.model, d.year, d.price_eur,
-               o.os_name, o.os_version
-        FROM Device d
-        JOIN Device_Name dn ON dn.id = d.device_name_id
-        LEFT JOIN OS o ON o.id = d.os_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
-        ORDER BY d.price_eur DESC
+        WITH ranked AS (
+            SELECT dn.brand, dn.model, d.year, d.price_eur,
+                   o.os_name, o.os_version,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY dn.brand, dn.model
+                       ORDER BY d.price_eur DESC
+                   ) AS rn
+            FROM Device d
+            JOIN Device_Name dn ON dn.id = d.device_name_id
+            LEFT JOIN OS o ON o.id = d.os_id
+            WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        )
+        SELECT brand, model, year, price_eur, os_name, os_version
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY price_eur DESC
         LIMIT {int(limit)}
         """
     )
