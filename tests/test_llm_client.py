@@ -91,9 +91,11 @@ class TestPipelineRetry:
     @pytest.fixture(autouse=True)
     def _patch_db(self, populated_engine, monkeypatch):
         """Force the populated_engine fixture to construct (which patches
-        ro_engine), and disable result-review by default for the error-retry
-        tests below — they're testing the guard / DB-error path, not review."""
+        ro_engine), and disable result-review + explanation by default for
+        the error-retry tests below — they're testing the guard / DB-error
+        path, not review or explanation."""
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
         return populated_engine
 
     def test_first_try_success(self, monkeypatch):
@@ -189,8 +191,9 @@ class TestPipelineReview:
 
     @pytest.fixture(autouse=True)
     def _patch_db(self, populated_engine, monkeypatch):
-        # Verification ON by default for these tests
+        # Verification ON; explanation OFF — focus on the review semantics.
         monkeypatch.delenv("MLX_VERIFY_RESULTS", raising=False)
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
         return populated_engine
 
     def test_review_approves_first_result(self, monkeypatch):
@@ -243,3 +246,46 @@ class TestPipelineReview:
         result = llm_pipeline.answer_question("brands")
         assert len(result.attempts) == 1
         assert result.attempts[0].succeeded
+
+
+class TestPipelineExplanation:
+    """Final LLM turn that explains the result for the user."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_db(self, populated_engine, monkeypatch):
+        # Skip the review loop so this suite focuses on the explanation turn.
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.delenv("MLX_EXPLAIN_RESULTS", raising=False)
+        return populated_engine
+
+    def test_explanation_added_after_success(self, monkeypatch):
+        responses = iter([
+            "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",
+            "Two brands are listed: Apple and Samsung.",
+        ])
+        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+
+        result = llm_pipeline.answer_question("show brands")
+        assert result.explanation == "Two brands are listed: Apple and Samsung."
+
+    def test_explain_off_returns_none(self, monkeypatch):
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+        monkeypatch.setattr(
+            llm_pipeline, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+        result = llm_pipeline.answer_question("brands")
+        assert result.explanation is None
+
+    def test_explanation_strips_code_blocks(self, monkeypatch):
+        """If the model accidentally emits SQL in the explanation, strip it."""
+        responses = iter([
+            "```sql\nSELECT 1\n```",
+            "The result is 1. ```sql\nSELECT 1\n``` Just one row.",
+        ])
+        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+
+        result = llm_pipeline.answer_question("just one")
+        assert "```" not in (result.explanation or "")
+        assert "The result is 1" in result.explanation
+        assert "Just one row" in result.explanation
