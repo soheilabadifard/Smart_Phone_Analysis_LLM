@@ -235,10 +235,16 @@ class TestPriceCi2023:
 
 def _assert_ht_envelope(body: dict) -> None:
     """All HT endpoints share this envelope."""
-    assert {"name", "description", "test", "alpha", "conclusion", "groups"} <= set(body)
+    assert {"name", "description", "test", "alpha", "conclusion", "groups",
+            "null_hypothesis", "alternative_hypothesis", "decision"} <= set(body)
     assert isinstance(body["groups"], list)
     for group in body["groups"]:
         assert {"n", "mean", "std", "values"} <= set(group)
+    # Null & alternative hypotheses are populated for every real HT endpoint
+    # (the empty-brand fallbacks may have empty strings — that's OK).
+    assert isinstance(body["null_hypothesis"], str)
+    assert isinstance(body["alternative_hypothesis"], str)
+    assert body["decision"] in ("reject H₀", "fail to reject H₀", "insufficient data")
 
 
 class TestHypothesisTests:
