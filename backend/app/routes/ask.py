@@ -20,6 +20,8 @@ class AttemptOut(BaseModel):
     sql: str
     error: str | None = None
     succeeded: bool = False
+    kind: str = "execution"          # 'execution' | 'review'
+    judgment: str | None = None      # LLM's review-turn text
 
 
 class AskResponse(BaseModel):
@@ -29,6 +31,14 @@ class AskResponse(BaseModel):
     rows: list[dict]
     attempts: list[AttemptOut]
     raw_llm_response: str
+
+
+def _to_out(a) -> AttemptOut:
+    return AttemptOut(
+        sql=a.sql, error=a.error, succeeded=a.succeeded,
+        kind=getattr(a, "kind", "execution"),
+        judgment=getattr(a, "judgment", None),
+    )
 
 
 @router.post("", response_model=AskResponse)
@@ -42,10 +52,7 @@ def ask(req: AskRequest) -> AskResponse:
             detail={
                 "message": f"LLM failed to produce a runnable query after {len(result.attempts)} attempts.",
                 "last_error": last_err,
-                "attempts": [
-                    AttemptOut(sql=a.sql, error=a.error, succeeded=a.succeeded).model_dump()
-                    for a in result.attempts
-                ],
+                "attempts": [_to_out(a).model_dump() for a in result.attempts],
             },
         )
 
@@ -54,6 +61,6 @@ def ask(req: AskRequest) -> AskResponse:
         sql=result.sql,
         columns=result.columns,
         rows=result.rows,
-        attempts=[AttemptOut(sql=a.sql, error=a.error, succeeded=a.succeeded) for a in result.attempts],
+        attempts=[_to_out(a) for a in result.attempts],
         raw_llm_response=result.raw_llm_response,
     )
