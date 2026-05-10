@@ -74,6 +74,11 @@ function RegressionTable({ data }) {
         <span><b>Adj R²:</b> {fmt(data.adj_r_squared, 3)}</span>
         <span><b>F:</b> {fmt(data.f_statistic, 2)} (p = {fmt(data.f_p_value, 4)})</span>
       </div>
+      {Array.isArray(data.dropped_predictors) && data.dropped_predictors.length > 0 && (
+        <div style={{ color: '#e0c060', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+          Dropped (no data for this form factor): {data.dropped_predictors.join(', ')}
+        </div>
+      )}
       <table style={{ fontSize: '0.92em' }}>
         <thead>
           <tr><th>Variable</th><th>Coef</th><th>Std err</th><th>t</th><th>p-value</th></tr>
@@ -114,6 +119,11 @@ function ResidualDiagnosticsPanel({ data }) {
         <span><b>Std residual:</b> {fmt(data.std_residual, 1)}</span>
         <span><b>Outliers (|z|&gt;3):</b> {data.n_outliers_z3}</span>
       </div>
+      {Array.isArray(data.dropped_predictors) && data.dropped_predictors.length > 0 && (
+        <div style={{ color: '#e0c060', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+          Dropped (no data for this form factor): {data.dropped_predictors.join(', ')}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
         <Plot
