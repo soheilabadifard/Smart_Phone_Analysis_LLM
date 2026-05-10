@@ -33,11 +33,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db import ro_engine
 from app.llm.client import (
     chat,
+    explanation_messages,
     extract_sql,
     format_result_preview,
     has_fenced_sql,
     initial_messages,
     review_user_message,
+    strip_code_fences,
 )
 from app.llm.sql_guard import UnsafeSQLError, ensure_select_only
 
@@ -62,6 +64,7 @@ class AskResult:
     rows: list[dict]
     attempts: list[Attempt] = field(default_factory=list)
     raw_llm_response: str = ""
+    explanation: str | None = None
 
 
 def _max_attempts() -> int:
@@ -75,11 +78,32 @@ def _verify_results_enabled() -> bool:
     return os.getenv("MLX_VERIFY_RESULTS", "true").lower() not in {"false", "0", "no"}
 
 
+def _explain_results_enabled() -> bool:
+    return os.getenv("MLX_EXPLAIN_RESULTS", "true").lower() not in {"false", "0", "no"}
+
+
 def _preview_rows() -> int:
     try:
         return max(1, int(os.getenv("MLX_VERIFY_PREVIEW_ROWS", "10")))
     except ValueError:
         return 10
+
+
+def _explain_result(question: str, sql: str,
+                    cols: list[str], rows: list[dict]) -> str | None:
+    """Ask the LLM for a 2-4 sentence plain-English summary of the result.
+
+    Self-contained: builds a fresh chat conversation with its own system
+    prompt and a single user turn carrying the question, SQL, and result
+    preview. Returns None if explanations are disabled or the model emits
+    nothing usable.
+    """
+    if not _explain_results_enabled():
+        return None
+    preview = format_result_preview(cols, rows, max_rows=_preview_rows())
+    raw = chat(explanation_messages(question, sql, preview))
+    cleaned = strip_code_fences(raw)
+    return cleaned or None
 
 
 def _retry_user_message(error: str) -> str:
@@ -157,6 +181,7 @@ def answer_question(question: str) -> AskResult:
                 question=question,
                 sql=prev_sql, columns=prev_cols, rows=prev_rows,
                 attempts=attempts, raw_llm_response=last_raw,
+                explanation=_explain_result(question, prev_sql, prev_cols, prev_rows),
             )
         seen_sqls.add(safe_sql)
         last_success = (safe_sql, cols, rows)
@@ -167,6 +192,7 @@ def answer_question(question: str) -> AskResult:
             return AskResult(
                 question=question, sql=safe_sql, columns=cols, rows=rows,
                 attempts=attempts, raw_llm_response=last_raw,
+                explanation=_explain_result(question, safe_sql, cols, rows),
             )
 
         # Verification on: ask the model to judge the result.
@@ -184,6 +210,7 @@ def answer_question(question: str) -> AskResult:
             return AskResult(
                 question=question, sql=safe_sql, columns=cols, rows=rows,
                 attempts=attempts, raw_llm_response=review_raw,
+                explanation=_explain_result(question, safe_sql, cols, rows),
             )
 
         # Refinement: log the judgment and feed the refined SQL into the next
@@ -201,6 +228,7 @@ def answer_question(question: str) -> AskResult:
         return AskResult(
             question=question, sql=prev_sql, columns=prev_cols, rows=prev_rows,
             attempts=attempts, raw_llm_response=last_raw,
+            explanation=_explain_result(question, prev_sql, prev_cols, prev_rows),
         )
     return AskResult(
         question=question,
