@@ -120,6 +120,19 @@ export default function AskView() {
           </div>
           <div className="card">
             <h3 style={{ marginTop: 0 }}>Result · {answer.rows.length} row{answer.rows.length === 1 ? '' : 's'}</h3>
+            {answer.explanation && (
+              <div style={{
+                background: '#1d2531', border: '1px solid #2a3a4a',
+                borderLeft: '3px solid #6aa9ff', borderRadius: 4,
+                padding: '0.7rem 0.9rem', marginBottom: '0.8rem',
+                color: '#cfdaeb', fontSize: '0.95rem', lineHeight: 1.45,
+              }}>
+                <div style={{ color: '#9bd1ff', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>
+                  LLM explanation
+                </div>
+                {answer.explanation}
+              </div>
+            )}
             {answer.rows.length === 0 ? (
               <p style={{ color: '#9aa3ad' }}>No rows.</p>
             ) : (
