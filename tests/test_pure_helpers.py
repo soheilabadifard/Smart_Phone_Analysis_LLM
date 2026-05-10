@@ -12,7 +12,23 @@ import pytest
 
 from etl.JsonToDataframe import flatten_json, process_json
 from etl.audit_cleaning import is_sentinel
-from generate_records_sql import emit_inserts, format_value
+
+# generate_records_sql lives at the repo root and is intentionally untracked
+# (a developer-workstation deliverable generator). The two test classes that
+# exercise it are skipped cleanly when it isn't on PYTHONPATH, so CI can still
+# run TestFlattenJson / TestProcessJson / TestIsSentinel.
+try:
+    from generate_records_sql import emit_inserts, format_value
+    _grs_available = True
+except ModuleNotFoundError:
+    emit_inserts = None  # type: ignore[assignment]
+    format_value = None  # type: ignore[assignment]
+    _grs_available = False
+
+requires_grs = pytest.mark.skipif(
+    not _grs_available,
+    reason="generate_records_sql.py is a local-only deliverable generator",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +132,7 @@ class TestIsSentinel:
 # ---------------------------------------------------------------------------
 
 
+@requires_grs
 class TestFormatValue:
     def test_none_is_null(self):
         assert format_value(None) == "NULL"
@@ -149,6 +166,7 @@ class TestFormatValue:
 # ---------------------------------------------------------------------------
 
 
+@requires_grs
 class TestEmitInserts:
     def test_empty_rows_emits_comment(self):
         out = emit_inserts("Device", ["id", "year"], [], batch_size=10)
