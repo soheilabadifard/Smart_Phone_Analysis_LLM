@@ -139,6 +139,18 @@ class TestTopExpensivePhones:
         # Seed id=4 has NULL price; it must not appear.
         assert all(row["price_eur"] is not None for row in rows)
 
+    def test_dedupes_to_one_row_per_model(self, client):
+        """Device is per-configuration; a phone with N storage tiers is N
+        rows in Device. The endpoint must dedupe to one row per (brand, model)
+        — picking the most-expensive config — so the table doesn't show
+        the same phone three times."""
+        rows = client.get("/api/analytics/top-expensive-phones").json()
+        seen = set()
+        for row in rows:
+            key = (row["brand"], row["model"])
+            assert key not in seen, f"duplicate (brand, model): {key}"
+            seen.add(key)
+
 
 class TestPpiTrend:
     def test_only_three_brands(self, client):
