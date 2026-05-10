@@ -1,5 +1,14 @@
 import { useState } from 'react'
 
+function summariseAttempts(attempts) {
+  const exec = attempts.filter((a) => a.kind !== 'review').length
+  const review = attempts.filter((a) => a.kind === 'review').length
+  const parts = []
+  if (exec > 0) parts.push(`${exec} execution${exec === 1 ? '' : 's'}`)
+  if (review > 0) parts.push(`${review} review${review === 1 ? '' : 's'}`)
+  return parts.join(', ')
+}
+
 const SUGGESTIONS = [
   'Which 5 brands have the highest average phone price?',
   'List Samsung phones from 2023 with at least 8 GB RAM, sorted by battery.',
@@ -77,7 +86,7 @@ export default function AskView() {
               Generated SQL
               {answer.attempts && answer.attempts.length > 1 && (
                 <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#f0c674' }}>
-                  · {answer.attempts.length} attempts (self-corrected)
+                  · {answer.attempts.length} attempts ({summariseAttempts(answer.attempts)})
                 </span>
               )}
             </h3>
@@ -85,13 +94,25 @@ export default function AskView() {
             {answer.attempts && answer.attempts.length > 1 && (
               <details style={{ marginTop: '0.6rem' }}>
                 <summary style={{ cursor: 'pointer', color: '#9aa3ad' }}>
-                  Show {answer.attempts.length - 1} failed attempt{answer.attempts.length - 1 === 1 ? '' : 's'}
+                  Show {answer.attempts.length - 1} earlier attempt{answer.attempts.length - 1 === 1 ? '' : 's'}
                 </summary>
                 {answer.attempts.slice(0, -1).map((a, i) => (
                   <div key={i} style={{ marginTop: '0.6rem' }}>
-                    <div style={{ color: '#9aa3ad', fontSize: '0.8rem' }}>Attempt {i + 1}</div>
+                    <div style={{ color: '#9aa3ad', fontSize: '0.8rem' }}>
+                      Attempt {i + 1}
+                      <span style={{ marginLeft: '0.4rem', padding: '0.05rem 0.4rem', borderRadius: 4,
+                                     background: a.kind === 'review' ? '#2a3a4a' : '#3a2a2a',
+                                     color: a.kind === 'review' ? '#9bd1ff' : '#ffb3b3' }}>
+                        {a.kind === 'review' ? 'review' : 'execution'}
+                      </span>
+                    </div>
                     <pre className="sql" style={{ opacity: 0.7 }}>{a.sql}</pre>
                     {a.error && <div className="error" style={{ marginTop: '0.3rem' }}>{a.error}</div>}
+                    {a.judgment && (
+                      <div style={{ marginTop: '0.3rem', color: '#9bd1ff', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                        LLM judgment: {a.judgment}
+                      </div>
+                    )}
                   </div>
                 ))}
               </details>
