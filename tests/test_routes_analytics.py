@@ -212,22 +212,62 @@ class TestQuantitativeDistributions:
 # ---------------------------------------------------------------------------
 
 
-class TestPriceCi2023:
+class TestPriceCiByBrand:
     def test_returns_one_row_per_brand(self, client):
-        r = client.get("/api/analytics/price-ci-2023")
+        r = client.get("/api/analytics/price-ci-by-brand")
         assert r.status_code == 200
         rows = r.json()
         # Brands are now auto-picked (top 5 by row count) per form factor.
         # Seed has 3 phone brands (Apple, Samsung, Xiaomi) so we get 3 rows.
         assert len(rows) <= 5
         for row in rows:
-            assert {"brand", "n", "mean", "std", "lower", "upper", "alpha"} <= set(row)
+            assert {"brand", "n", "mean", "std", "lower", "upper", "alpha", "year"} <= set(row)
         # Each row should be a unique brand
         brands = [row["brand"] for row in rows]
         assert len(brands) == len(set(brands))
 
+    def test_default_alpha_is_0_05(self, client):
+        rows = client.get("/api/analytics/price-ci-by-brand").json()
+        if rows:
+            assert rows[0]["alpha"] == 0.05
+
+    def test_explicit_year_is_honoured(self, client):
+        rows = client.get("/api/analytics/price-ci-by-brand?year=2024").json()
+        for row in rows:
+            assert row["year"] == 2024
+
+    def test_explicit_alpha_is_honoured(self, client):
+        rows = client.get("/api/analytics/price-ci-by-brand?alpha=0.01").json()
+        for row in rows:
+            assert row["alpha"] == 0.01
+
     def test_lower_under_upper_when_data_present(self, client):
-        rows = client.get("/api/analytics/price-ci-2023").json()
+        rows = client.get("/api/analytics/price-ci-by-brand").json()
+        for row in rows:
+            if row["n"] >= 2:
+                assert row["lower"] <= row["mean"] <= row["upper"]
+
+
+class TestBatteryCiByBrand:
+    def test_returns_one_row_per_brand(self, client):
+        r = client.get("/api/analytics/battery-ci-by-brand")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) <= 5
+        for row in rows:
+            assert {"brand", "n", "mean", "std", "lower", "upper", "alpha"} <= set(row)
+            # No year filter on the battery endpoint.
+            assert "year" not in row
+        brands = [row["brand"] for row in rows]
+        assert len(brands) == len(set(brands))
+
+    def test_default_alpha_is_0_05(self, client):
+        rows = client.get("/api/analytics/battery-ci-by-brand").json()
+        if rows:
+            assert rows[0]["alpha"] == 0.05
+
+    def test_lower_under_upper_when_data_present(self, client):
+        rows = client.get("/api/analytics/battery-ci-by-brand").json()
         for row in rows:
             if row["n"] >= 2:
                 assert row["lower"] <= row["mean"] <= row["upper"]
