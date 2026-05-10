@@ -734,6 +734,23 @@ def _resolve_year(year: int | None, form_factor: str) -> int | None:
     return int(df["y"].iloc[0])
 
 
+@router.get("/available-years")
+def available_years(form_factor: FormFactor = "phone") -> list[int]:
+    """Return the distinct populated years for the given form factor, sorted
+    descending. Used by the Analytics tab's year selector on the price-CI
+    panel so the dropdown options match what's actually in the database.
+    """
+    df = _df(
+        f"""
+        SELECT DISTINCT d.year AS year
+        FROM Device d
+        WHERE {_form_filter(form_factor)} AND d.year IS NOT NULL
+        ORDER BY d.year DESC
+        """
+    )
+    return [int(y) for y in df["year"].tolist()]
+
+
 @router.get("/price-ci-by-brand")
 def price_ci_by_brand(
     year: int | None = None,
