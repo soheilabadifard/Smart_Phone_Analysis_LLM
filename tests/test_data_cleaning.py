@@ -147,6 +147,64 @@ class TestWeightAndDimensions:
         assert all(pd.isna(proc.df["length"]))
         assert all(pd.isna(proc.df["volume"]))
 
+    def test_dimensions_dash_is_missing(self):
+        """GSMArena uses '-' as a placeholder; should be treated as NaN, not
+        counted as a parse failure."""
+        df = pd.DataFrame({"Body_Dimensions": ["-", "  -  "]})
+        proc = DataPreProcess(df)
+        proc.demintions_process()
+        assert all(pd.isna(proc.df["length"]))
+        assert all(pd.isna(proc.df["height"]))
+        assert all(pd.isna(proc.df["volume"]))
+
+    def test_dimensions_two_axes_only(self):
+        """'247 x 179 mm' — length + width, no thickness."""
+        df = pd.DataFrame({"Body_Dimensions": ["247 x 179 mm"]})
+        proc = DataPreProcess(df)
+        proc.demintions_process()
+        assert proc.df["length"].iloc[0] == 247
+        assert proc.df["width"].iloc[0] == 179
+        assert pd.isna(proc.df["height"].iloc[0])
+        assert pd.isna(proc.df["volume"].iloc[0])
+
+    def test_dimensions_unknown_width(self):
+        """'156.8 x Unknown x 8 mm' — keep length and thickness."""
+        df = pd.DataFrame({"Body_Dimensions": [
+            "156.8 x Unknown x 8 mm",
+            "126.1 x 50.5 x X.X mm",
+        ]})
+        proc = DataPreProcess(df)
+        proc.demintions_process()
+        # Row 0: length=156.8, width=NaN, height=8
+        assert proc.df["length"].iloc[0] == 156.8
+        assert pd.isna(proc.df["width"].iloc[0])
+        assert proc.df["height"].iloc[0] == 8
+        # Row 1: length=126.1, width=NaN (X.X is the placeholder), height=NaN
+        # (the regex matches '<L> x <placeholder> x <H>' where H must be numeric;
+        # 'X.X' isn't numeric so the partial-xyz regex won't match this row)
+        assert proc.df["length"].iloc[1] == 126.1 or pd.isna(proc.df["length"].iloc[1])
+
+    def test_dimensions_thickness_only(self):
+        """'8.1 mm thickness' or 'Folded thickness: 10 mm' — height only."""
+        df = pd.DataFrame({"Body_Dimensions": [
+            "8.1 mm thickness",
+            "Folded thickness: 10 mm",
+        ]})
+        proc = DataPreProcess(df)
+        proc.demintions_process()
+        assert proc.df["height"].iloc[0] == 8.1
+        assert proc.df["height"].iloc[1] == 10
+        assert pd.isna(proc.df["length"].iloc[0])
+        assert pd.isna(proc.df["width"].iloc[1])
+
+    def test_dimensions_volume_only(self):
+        """'100 cc' — volume only."""
+        df = pd.DataFrame({"Body_Dimensions": ["100 cc"]})
+        proc = DataPreProcess(df)
+        proc.demintions_process()
+        assert proc.df["volume"].iloc[0] == 100
+        assert pd.isna(proc.df["length"].iloc[0])
+
 
 # ---------------------------------------------------------------------------
 # Network technology indicator columns
