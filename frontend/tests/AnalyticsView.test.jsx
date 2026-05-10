@@ -24,12 +24,19 @@ const RESPONSES = {
   ],
   'correlation-matrix': { columns: ['weight', 'price_eur'], matrix: [[1.0, 0.4], [0.4, 1.0]] },
   'quantitative-distributions': { weight: [170, 180, 190], price_eur: [500, 700, 900] },
-  'price-ci-2023': [
-    { brand: 'Apple', n: 12, mean: 1200, std: 200, lower: 1100, upper: 1300, alpha: 0.02 },
-    { brand: 'Samsung', n: 30, mean: 800, std: 150, lower: 750, upper: 850, alpha: 0.02 },
-    { brand: 'Huawei', n: 0, mean: null, std: null, lower: null, upper: null, alpha: 0.02 },
-    { brand: 'Xiaomi', n: 25, mean: 350, std: 100, lower: 320, upper: 380, alpha: 0.02 },
-    { brand: 'Nokia', n: 8, mean: 250, std: 60, lower: 220, upper: 280, alpha: 0.02 },
+  'price-ci-by-brand': [
+    { brand: 'Apple', n: 12, mean: 1200, std: 200, lower: 1100, upper: 1300, alpha: 0.05, year: 2024 },
+    { brand: 'Samsung', n: 30, mean: 800, std: 150, lower: 750, upper: 850, alpha: 0.05, year: 2024 },
+    { brand: 'Huawei', n: 0, mean: null, std: null, lower: null, upper: null, alpha: 0.05, year: 2024 },
+    { brand: 'Xiaomi', n: 25, mean: 350, std: 100, lower: 320, upper: 380, alpha: 0.05, year: 2024 },
+    { brand: 'Nokia', n: 8, mean: 250, std: 60, lower: 220, upper: 280, alpha: 0.05, year: 2024 },
+  ],
+  'battery-ci-by-brand': [
+    { brand: 'Apple', n: 80, mean: 3300, std: 600, lower: 3170, upper: 3430, alpha: 0.05 },
+    { brand: 'Samsung', n: 250, mean: 4200, std: 800, lower: 4100, upper: 4300, alpha: 0.05 },
+    { brand: 'Huawei', n: 90, mean: 4100, std: 700, lower: 3950, upper: 4250, alpha: 0.05 },
+    { brand: 'Xiaomi', n: 200, mean: 4500, std: 900, lower: 4380, upper: 4620, alpha: 0.05 },
+    { brand: 'Nokia', n: 60, mean: 3500, std: 700, lower: 3320, upper: 3680, alpha: 0.05 },
   ],
   'ht-price-by-sim-and-size': {
     name: 'Price differs by SIM type and device size?',
@@ -229,7 +236,8 @@ describe('AnalyticsView', () => {
     expect(screen.getByText(/quantitative columns/i)).toBeInTheDocument()
 
     // Section 3
-    expect(screen.getByText(/2023 average price by brand/i)).toBeInTheDocument()
+    expect(screen.getByText(/Average price by brand/i)).toBeInTheDocument()
+    expect(screen.getByText(/Average battery capacity by brand/i)).toBeInTheDocument()
     expect(screen.getByText(/Hypothesis tests/i)).toBeInTheDocument()
 
     // Section 4
