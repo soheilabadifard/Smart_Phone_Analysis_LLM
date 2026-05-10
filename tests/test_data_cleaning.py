@@ -188,6 +188,68 @@ class TestBatteryProcess:
         assert cap[1] == 5000
         assert pd.isna(cap[2])
 
+    def test_wh_only_returns_nan(self):
+        """Watt-hour-only entries had silently corrupted the column with the
+        Wh number. Without cell voltage we can't convert, so we return NaN."""
+        df = pd.DataFrame({
+            "Battery_Type": [
+                "Non-removable Li-Po battery (25 Wh)",
+                "Li-Po (28.93 Wh)",
+                "Li-Ion, non-removable (32.4 Wh)",
+            ],
+        })
+        proc = DataPreProcess(df)
+        proc.battery_capacity_process()
+        cap = proc.df["Battery_capacity"].tolist()
+        assert all(pd.isna(c) for c in cap)
+
+    def test_mah_wins_over_wh(self):
+        """When both are present, the mAh number is the right answer."""
+        df = pd.DataFrame({
+            "Battery_Type": ["Li-Ion 250 mAh (0.94 Wh), non-removable"],
+        })
+        proc = DataPreProcess(df)
+        proc.battery_capacity_process()
+        assert proc.df["Battery_capacity"].iloc[0] == 250
+
+    def test_decimal_mah_rounded(self):
+        """Schema is integer mAh; '303.8 mAh' should round to 304, not truncate to 303."""
+        df = pd.DataFrame({
+            "Battery_Type": ["Li-Ion 303.8 mAh (1.19 Wh), non-removable"],
+        })
+        proc = DataPreProcess(df)
+        proc.battery_capacity_process()
+        assert proc.df["Battery_capacity"].iloc[0] == 304
+
+    def test_thousands_separator_in_mah(self):
+        """GSMArena formats large tablet batteries as '10,050 mAh' — the
+        regex must accept commas inside the digit run."""
+        df = pd.DataFrame({
+            "Battery_Type": [
+                "Li-Po 10,050 mAh, non-removable",
+                "Li-Ion 10,891 mAh, non-removable (41 Wh)",
+            ],
+        })
+        proc = DataPreProcess(df)
+        proc.battery_capacity_process()
+        cap = proc.df["Battery_capacity"].tolist()
+        assert cap[0] == 10050
+        assert cap[1] == 10891
+
+    def test_no_capacity_listed_returns_nan(self):
+        """Pages that only list chemistry / removable status without a number."""
+        df = pd.DataFrame({
+            "Battery_Type": [
+                "Removable Li-Ion battery",
+                "Li-Ion, non-removable",
+                "Removable battery",
+            ],
+        })
+        proc = DataPreProcess(df)
+        proc.battery_capacity_process()
+        cap = proc.df["Battery_capacity"].tolist()
+        assert all(pd.isna(c) for c in cap)
+
 
 # ---------------------------------------------------------------------------
 # Display extraction
