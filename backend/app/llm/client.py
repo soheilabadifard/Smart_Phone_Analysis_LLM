@@ -111,6 +111,43 @@ def review_user_message(question: str, sql: str, preview: str) -> str:
     )
 
 
+_EXPLAIN_SYSTEM_PROMPT = (
+    "You explain the result of a SQL query to a non-technical reader. "
+    "Be concise (2-4 short sentences), specific, and plain. Refer to actual "
+    "values from the table where useful. Do NOT emit SQL, code blocks, or "
+    "markdown headings. If the result has 0 rows, say so plainly and "
+    "interpret that as 'no devices match these filters'."
+)
+
+
+def explanation_messages(question: str, sql: str, preview: str) -> list[dict]:
+    """Self-contained chat conversation for the explanation turn.
+
+    Independent from the NL→SQL conversation so the model isn't tempted to
+    re-emit SQL. Also keeps the context short (just system + one user turn).
+    """
+    user_content = (
+        f"Question: \"{question}\"\n\n"
+        "SQL:\n"
+        "```sql\n"
+        f"{sql}\n"
+        "```\n\n"
+        "Result:\n\n"
+        f"{preview}\n\n"
+        "Explain this result in 2-4 short sentences for the user."
+    )
+    return [
+        {"role": "system", "content": _EXPLAIN_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def strip_code_fences(text: str) -> str:
+    """Remove any ```...``` blocks from `text` — defensive cleanup for the
+    explanation turn, in case the model slips in code despite instructions."""
+    return _SQL_FENCE.sub("", text).strip()
+
+
 def chat(messages: list[dict]) -> str:
     """Single round-trip to the MLX server. Returns the assistant text."""
     resp = _client().chat.completions.create(
