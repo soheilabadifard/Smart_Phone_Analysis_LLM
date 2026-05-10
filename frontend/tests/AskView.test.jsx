@@ -48,8 +48,8 @@ describe('AskView', () => {
           columns: ['one'],
           rows: [{ one: 1 }],
           attempts: [
-            { sql: 'DROP TABLE Device', error: 'Refused unsafe SQL', succeeded: false },
-            { sql: 'SELECT 1 AS one', error: null, succeeded: true },
+            { sql: 'DROP TABLE Device', error: 'Refused unsafe SQL', succeeded: false, kind: 'execution' },
+            { sql: 'SELECT 1 AS one', error: null, succeeded: true, kind: 'execution' },
           ],
           raw_llm_response: '',
         }),
@@ -60,8 +60,36 @@ describe('AskView', () => {
     await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
     await user.click(screen.getByRole('button', { name: /^ask$/i }))
 
-    await waitFor(() => screen.getByText(/2 attempts \(self-corrected\)/))
-    expect(screen.getByText(/Show 1 failed attempt/)).toBeInTheDocument()
+    await waitFor(() => screen.getByText(/2 attempts \(2 executions\)/))
+    expect(screen.getByText(/Show 1 earlier attempt/)).toBeInTheDocument()
+  })
+
+  it('shows review judgment when verification approves', async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          question: 'q',
+          sql: 'SELECT brand FROM Device_Name LIMIT 1',
+          columns: ['brand'],
+          rows: [{ brand: 'Apple' }],
+          attempts: [
+            { sql: 'SELECT brand FROM Device_Name LIMIT 1', succeeded: true, kind: 'execution' },
+            { sql: 'SELECT brand FROM Device_Name LIMIT 1', succeeded: true, kind: 'review', judgment: 'OK' },
+          ],
+          raw_llm_response: 'OK',
+        }),
+    }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    await waitFor(() => screen.getByText(/2 attempts \(1 execution, 1 review\)/))
+    // Open the details to see the judgment
+    await user.click(screen.getByText(/Show 1 earlier attempt/))
   })
 
   it('shows error banner on backend failure', async () => {
