@@ -325,6 +325,13 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
   // view renders charts scoped to whichever device class the user picked.
   const q = `?form_factor=${encodeURIComponent(formFactor)}`
 
+  // Price-CI controls. `priceCiYear === ''` means "let the backend pick the
+  // most recent populated year"; useEndpoint refetches whenever the URL
+  // changes, so adjusting either control re-renders the chart automatically.
+  const years = useEndpoint(`/api/analytics/available-years${q}`)
+  const [priceCiYear, setPriceCiYear] = useState('')
+  const [priceCiAlpha, setPriceCiAlpha] = useState(0.05)
+
   // Section 1 — existing R-style summaries
   const brand = useEndpoint(`/api/analytics/brand-summary${q}`)
   const annual = useEndpoint(`/api/analytics/annual-launches${q}`)
@@ -342,8 +349,9 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
   const quant = useEndpoint(`/api/analytics/quantitative-distributions${q}`)
 
   // Section 3 — inferential stats (Estimation + HT1-HT6)
-  const priceCi = useEndpoint(`/api/analytics/price-ci-by-brand${q}`)
-  const batteryCi = useEndpoint(`/api/analytics/battery-ci-by-brand${q}`)
+  const priceCiQs = `${q}${priceCiYear ? `&year=${encodeURIComponent(priceCiYear)}` : ''}&alpha=${priceCiAlpha}`
+  const priceCi = useEndpoint(`/api/analytics/price-ci-by-brand${priceCiQs}`)
+  const batteryCi = useEndpoint(`/api/analytics/battery-ci-by-brand${q}&alpha=${priceCiAlpha}`)
   const ht1 = useEndpoint(`/api/analytics/ht-price-by-sim-and-size${q}`)
   const ht2 = useEndpoint(`/api/analytics/ht-ppi-by-size${q}`)
   const ht3 = useEndpoint(`/api/analytics/ht-weight-android-vs-ios${q}`)
@@ -595,6 +603,40 @@ export default function AnalyticsView({ formFactor = 'phone' }) {
       </ChartCard>
 
       <h2>Inferential statistics</h2>
+
+      <div className="card" style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: '0.95em' }}>Confidence-interval controls:</strong>
+        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          Year
+          <select
+            aria-label="Year for price CI"
+            value={priceCiYear}
+            onChange={(e) => setPriceCiYear(e.target.value)}
+            style={{ background: '#161a21', color: '#e6e8eb', border: '1px solid #444', padding: '4px 8px', borderRadius: 4 }}
+          >
+            <option value="">latest populated</option>
+            {years.data && years.data.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          α
+          <select
+            aria-label="Alpha for confidence intervals"
+            value={priceCiAlpha}
+            onChange={(e) => setPriceCiAlpha(Number(e.target.value))}
+            style={{ background: '#161a21', color: '#e6e8eb', border: '1px solid #444', padding: '4px 8px', borderRadius: 4 }}
+          >
+            <option value={0.01}>0.01 (99% CI)</option>
+            <option value={0.05}>0.05 (95% CI)</option>
+            <option value={0.10}>0.10 (90% CI)</option>
+          </select>
+        </label>
+        <span style={{ color: '#9aa0a6', fontSize: '0.85em' }}>
+          Both CI charts below re-fetch when these change.
+        </span>
+      </div>
 
       <ChartCard
         title={`Average price by brand — ${ciTitleSuffix(priceCi.data)} confidence interval${
