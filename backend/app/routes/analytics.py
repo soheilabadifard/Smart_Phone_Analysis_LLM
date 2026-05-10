@@ -15,7 +15,7 @@ sub-millisecond. If that ever stops being true, add module-level caching.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -34,9 +34,24 @@ router = APIRouter()
 # helpers
 # ---------------------------------------------------------------------------
 
-# Phone-only is the consistent default for these analyses; the dataset also
-# contains watches/tablets/bands which would skew comparisons.
-_PHONE = "d.form_factor = 'phone'"
+# All analytics endpoints accept a form_factor query param so the same set of
+# charts can be rendered for phones / watches / tablets / bands / 'other'.
+# The phone tab is the default for backwards compatibility.
+FormFactor = Literal['phone', 'watch', 'tablet', 'band', 'other']
+_PHONE = "d.form_factor = 'phone'"  # legacy constant; prefer _form_filter()
+
+
+def _form_filter(form_factor: str) -> str:
+    """SQL fragment restricting `Device d` to the given form factor.
+
+    Inlined into each endpoint's WHERE clause. Uses single quotes so it can
+    sit in an f-string without an extra parameter binding.
+    """
+    # Defensive: parameter is FastAPI-validated against the Literal, but this
+    # also runs from tests / direct calls. Reject anything unexpected.
+    if form_factor not in ('phone', 'watch', 'tablet', 'band', 'other'):
+        raise ValueError(f"unknown form_factor: {form_factor!r}")
+    return f"d.form_factor = '{form_factor}'"
 
 
 def _rows(sql: str) -> list[dict]:
@@ -47,6 +62,26 @@ def _rows(sql: str) -> list[dict]:
 def _df(sql: str) -> pd.DataFrame:
     with ro_engine().connect() as conn:
         return pd.read_sql(text(sql), conn)
+
+
+def _top_brands(form_factor: str, n: int) -> list[str]:
+    """Return the N most-populous brand names within the given form factor.
+
+    Used by analyses that previously hardcoded phone-only brand sets
+    (Apple/Samsung/Xiaomi for trends, Apple/Samsung/Huawei/Xiaomi/Nokia for
+    confidence intervals). Auto-picking lets the same endpoint produce
+    sensible output for watches and tablets without code changes.
+    """
+    df = _df(f"""
+        SELECT dn.brand, COUNT(*) AS n
+        FROM Device d
+        JOIN Device_Name dn ON dn.id = d.device_name_id
+        WHERE {_form_filter(form_factor)}
+        GROUP BY dn.brand
+        ORDER BY n DESC, dn.brand ASC
+        LIMIT {int(n)}
+    """)
+    return df['brand'].tolist()
 
 
 def _classify_size(display_size_inch: pd.Series) -> pd.Series:
@@ -322,10 +357,10 @@ def _ols_summary(model_formula: str, data: pd.DataFrame) -> dict:
 
 
 @router.get("/brand-summary")
-def brand_summary() -> list[dict]:
+def brand_summary(form_factor: FormFactor = "phone") -> list[dict]:
     """R1 — Brand catalogue summary: model count, avg price, year span."""
     return _rows(
-        """
+        f"""
         SELECT
             dn.brand,
             COUNT(*) AS device_count,
@@ -334,7 +369,7 @@ def brand_summary() -> list[dict]:
             MAX(d.year) AS last_year
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
-        WHERE d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         GROUP BY dn.brand
         HAVING COUNT(*) >= 3
         ORDER BY device_count DESC
@@ -343,7 +378,7 @@ def brand_summary() -> list[dict]:
 
 
 @router.get("/annual-launches")
-def annual_launches() -> list[dict]:
+def annual_launches(form_factor: FormFactor = "phone") -> list[dict]:
     """R2 — Year-over-year launches and avg specs.
 
     LEFT JOIN to Platform so the launches count includes devices whose chipset
@@ -362,7 +397,7 @@ def annual_launches() -> list[dict]:
             ROUND(AVG(p.internal_storage_gb), 2) AS avg_storage_gb
         FROM Device d
         LEFT JOIN Platform p ON p.id = d.platform_id
-        WHERE d.year BETWEEN 2010 AND {current_year}
+        WHERE {_form_filter(form_factor)} AND d.year BETWEEN 2010 AND {current_year}
         GROUP BY d.year
         ORDER BY d.year
         """
@@ -370,16 +405,16 @@ def annual_launches() -> list[dict]:
 
 
 @router.get("/chipset-popularity")
-def chipset_popularity() -> list[dict]:
+def chipset_popularity(form_factor: FormFactor = "phone") -> list[dict]:
     """Q10 variant — chipset manufacturer share."""
     return _rows(
-        """
+        f"""
         SELECT
             p.chipset_manufacturer,
             COUNT(*) AS device_count
         FROM Device d
         JOIN Platform p ON p.id = d.platform_id
-        WHERE p.chipset_manufacturer IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND p.chipset_manufacturer IS NOT NULL
         GROUP BY p.chipset_manufacturer
         ORDER BY device_count DESC
         LIMIT 15
@@ -388,10 +423,10 @@ def chipset_popularity() -> list[dict]:
 
 
 @router.get("/price-vs-battery")
-def price_vs_battery() -> list[dict]:
+def price_vs_battery(form_factor: FormFactor = "phone") -> list[dict]:
     """Scatter: price vs battery capacity (one point per device)."""
     return _rows(
-        """
+        f"""
         SELECT
             dn.brand,
             d.price_eur,
@@ -401,23 +436,24 @@ def price_vs_battery() -> list[dict]:
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
         JOIN Platform p ON p.id = d.platform_id
-        WHERE d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)}
+          AND d.price_eur IS NOT NULL
           AND d.battery_capacity_mah IS NOT NULL
         """
     )
 
 
 @router.get("/ram-distribution")
-def ram_distribution() -> list[dict]:
+def ram_distribution(form_factor: FormFactor = "phone") -> list[dict]:
     """RAM bucket distribution."""
     return _rows(
-        """
+        f"""
         SELECT
             p.ram_gb,
             COUNT(*) AS device_count
         FROM Device d
         JOIN Platform p ON p.id = d.platform_id
-        WHERE p.ram_gb IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND p.ram_gb IS NOT NULL
         GROUP BY p.ram_gb
         ORDER BY p.ram_gb
         """
@@ -430,7 +466,7 @@ def ram_distribution() -> list[dict]:
 
 
 @router.get("/network-technology")
-def network_technology_distribution() -> list[dict]:
+def network_technology_distribution(form_factor: FormFactor = "phone") -> list[dict]:
     """Q1 — Share of phones supporting each network generation.
 
     A device may support multiple generations (e.g. a 5G phone also speaks 4G
@@ -442,7 +478,7 @@ def network_technology_distribution() -> list[dict]:
         SELECT nt.technology
         FROM Device d
         JOIN Network_Technology nt ON nt.id = d.network_technology_id
-        WHERE {_PHONE}
+        WHERE {_form_filter(form_factor)}
         """
     )
     total = len(df)
@@ -464,14 +500,14 @@ def network_technology_distribution() -> list[dict]:
 
 
 @router.get("/sim-type-distribution")
-def sim_type_distribution() -> list[dict]:
+def sim_type_distribution(form_factor: FormFactor = "phone") -> list[dict]:
     """Q3 — SIM-type distribution across phones."""
     return _rows(
         f"""
         SELECT s.sim_type, COUNT(*) AS device_count
         FROM Device d
         JOIN Sim s ON s.id = d.sim_id
-        WHERE {_PHONE}
+        WHERE {_form_filter(form_factor)}
         GROUP BY s.sim_type
         ORDER BY device_count DESC
         """
@@ -479,14 +515,14 @@ def sim_type_distribution() -> list[dict]:
 
 
 @router.get("/top-android-versions")
-def top_android_versions(limit: int = 10) -> list[dict]:
+def top_android_versions(limit: int = 10, form_factor: FormFactor = "phone") -> list[dict]:
     """Q4 — Top-N most common Android versions."""
     return _rows(
         f"""
         SELECT o.os_version, COUNT(*) AS device_count
         FROM Device d
         JOIN OS o ON o.id = d.os_id
-        WHERE {_PHONE} AND o.os_name = 'Android' AND o.os_version IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND o.os_name = 'Android' AND o.os_version IS NOT NULL
         GROUP BY o.os_version
         ORDER BY device_count DESC
         LIMIT {int(limit)}
@@ -495,7 +531,7 @@ def top_android_versions(limit: int = 10) -> list[dict]:
 
 
 @router.get("/top-expensive-phones")
-def top_expensive_phones(limit: int = 50) -> list[dict]:
+def top_expensive_phones(limit: int = 50, form_factor: FormFactor = "phone") -> list[dict]:
     """Q5 — Top-N most expensive phones with their OS.
 
     `Device` is per-configuration (a phone with 3 storage tiers is 3 rows),
@@ -515,7 +551,7 @@ def top_expensive_phones(limit: int = 50) -> list[dict]:
             FROM Device d
             JOIN Device_Name dn ON dn.id = d.device_name_id
             LEFT JOIN OS o ON o.id = d.os_id
-            WHERE {_PHONE} AND d.price_eur IS NOT NULL
+            WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         )
         SELECT brand, model, year, price_eur, os_name, os_version
         FROM ranked
@@ -527,8 +563,12 @@ def top_expensive_phones(limit: int = 50) -> list[dict]:
 
 
 @router.get("/ppi-trend")
-def ppi_trend() -> list[dict]:
-    """Q7 — PPI density trend by year for Samsung / Xiaomi / Apple."""
+def ppi_trend(form_factor: FormFactor = "phone") -> list[dict]:
+    """Q7 — PPI density trend by year for the top-3 brands of this form factor."""
+    brands = _top_brands(form_factor, 3)
+    if not brands:
+        return []
+    brand_list = ", ".join(f"'{b.replace(chr(39), chr(39) * 2)}'" for b in brands)
     return _rows(
         f"""
         SELECT dn.brand, d.year, ROUND(AVG(disp.ppi_density), 2) AS avg_ppi,
@@ -536,8 +576,8 @@ def ppi_trend() -> list[dict]:
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE}
-          AND dn.brand IN ('Samsung', 'Xiaomi', 'Apple')
+        WHERE {_form_filter(form_factor)}
+          AND dn.brand IN ({brand_list})
           AND disp.ppi_density IS NOT NULL
         GROUP BY dn.brand, d.year
         ORDER BY d.year, dn.brand
@@ -546,7 +586,7 @@ def ppi_trend() -> list[dict]:
 
 
 @router.get("/correlation-matrix")
-def correlation_matrix() -> dict:
+def correlation_matrix(form_factor: FormFactor = "phone") -> dict:
     """Q2 — Pearson correlation across the quantitative spec columns."""
     df = _df(
         f"""
@@ -558,7 +598,7 @@ def correlation_matrix() -> dict:
         FROM Device d
         LEFT JOIN Display disp ON disp.id = d.display_id
         LEFT JOIN Platform p ON p.id = d.platform_id
-        WHERE {_PHONE}
+        WHERE {_form_filter(form_factor)}
         """
     )
     matrix = df.corr(numeric_only=True).round(3)
@@ -569,7 +609,7 @@ def correlation_matrix() -> dict:
 
 
 @router.get("/quantitative-distributions")
-def quantitative_distributions() -> dict:
+def quantitative_distributions(form_factor: FormFactor = "phone") -> dict:
     """Q8 — Raw values for each quantitative column. Frontend bins them."""
     df = _df(
         f"""
@@ -580,7 +620,7 @@ def quantitative_distributions() -> dict:
         FROM Device d
         LEFT JOIN Display disp ON disp.id = d.display_id
         LEFT JOIN Platform p ON p.id = d.platform_id
-        WHERE {_PHONE}
+        WHERE {_form_filter(form_factor)}
         """
     )
     return {
@@ -594,20 +634,24 @@ def quantitative_distributions() -> dict:
 
 
 @router.get("/price-ci-2023")
-def price_ci_2023(alpha: float = 0.02) -> list[dict]:
-    """Estimation — per-brand price 98% CI for 2023 (Apple, Samsung, Huawei,
-    Xiaomi, Nokia). Uses parametric t-distribution CI; mirrors notebook cell 35."""
+def price_ci_2023(alpha: float = 0.02, form_factor: FormFactor = "phone") -> list[dict]:
+    """Estimation — per-brand price 98% CI for 2023 across the top-5 brands
+    of the given form factor. Uses parametric t-distribution CI."""
+    brands = _top_brands(form_factor, 5)
+    if not brands:
+        return []
+    brand_list = ", ".join(f"'{b.replace(chr(39), chr(39) * 2)}'" for b in brands)
     df = _df(
         f"""
         SELECT dn.brand, d.price_eur
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
-        WHERE {_PHONE} AND d.year = 2023 AND d.price_eur IS NOT NULL
-          AND dn.brand IN ('Apple', 'Samsung', 'Huawei', 'Xiaomi', 'Nokia')
+        WHERE {_form_filter(form_factor)} AND d.year = 2023 AND d.price_eur IS NOT NULL
+          AND dn.brand IN ({brand_list})
         """
     )
     out: list[dict] = []
-    for brand in ['Apple', 'Samsung', 'Huawei', 'Xiaomi', 'Nokia']:
+    for brand in brands:
         group = df.loc[df['brand'] == brand, 'price_eur'].dropna().to_numpy()
         n = len(group)
         if n < 2:
@@ -641,7 +685,7 @@ def _ht_response(name: str, description: str, test_block: dict,
 
 
 @router.get("/ht-price-by-sim-and-size")
-def ht_price_by_sim_and_size() -> dict:
+def ht_price_by_sim_and_size(form_factor: FormFactor = "phone") -> dict:
     """HT1 — Two-way ANOVA: price ~ sim_type * size. SIM types: nano/micro/mini."""
     df = _df(
         f"""
@@ -649,7 +693,7 @@ def ht_price_by_sim_and_size() -> dict:
         FROM Device d
         JOIN Sim s ON s.id = d.sim_id
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
           AND s.sim_type IN ('nano', 'micro', 'mini')
         """
     ).dropna()
@@ -670,14 +714,14 @@ def ht_price_by_sim_and_size() -> dict:
 
 
 @router.get("/ht-ppi-by-size")
-def ht_ppi_by_size() -> dict:
+def ht_ppi_by_size(form_factor: FormFactor = "phone") -> dict:
     """HT2 — t-test (or Mann-Whitney U) on PPI between small and large devices."""
     df = _df(
         f"""
         SELECT disp.ppi_density, disp.display_size_inch
         FROM Device d
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE} AND disp.ppi_density IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND disp.ppi_density IS NOT NULL
         """
     ).dropna()
     df['size'] = _classify_size(df['display_size_inch'])
@@ -696,14 +740,14 @@ def ht_ppi_by_size() -> dict:
 
 
 @router.get("/ht-weight-android-vs-ios")
-def ht_weight_android_vs_ios() -> dict:
+def ht_weight_android_vs_ios(form_factor: FormFactor = "phone") -> dict:
     """HT3 — t-test (or Mann-Whitney U) on weight between Android and iOS phones."""
     df = _df(
         f"""
         SELECT d.weight, o.os_name
         FROM Device d
         JOIN OS o ON o.id = d.os_id
-        WHERE {_PHONE} AND d.weight IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.weight IS NOT NULL
           AND o.os_name IN ('Android', 'iOS')
         """
     ).dropna()
@@ -722,16 +766,26 @@ def ht_weight_android_vs_ios() -> dict:
 
 
 @router.get("/ht-battery-by-brand-and-size")
-def ht_battery_by_brand_and_size() -> dict:
-    """HT4 — Two-way ANOVA: battery ~ brand * size for Samsung/Xiaomi/Apple."""
+def ht_battery_by_brand_and_size(form_factor: FormFactor = "phone") -> dict:
+    """HT4 — Two-way ANOVA: battery ~ brand × size for the top-3 brands of
+    this form factor."""
+    brands = _top_brands(form_factor, 3)
+    if not brands:
+        return _ht_response(
+            name="Battery capacity differs by brand and device size?",
+            description="No brands available for this form factor.",
+            test_block={"test": "two-way ANOVA", "anova": [], "p_value": None},
+            groups=[],
+        )
+    brand_list = ", ".join(f"'{b.replace(chr(39), chr(39) * 2)}'" for b in brands)
     df = _df(
         f"""
         SELECT dn.brand, d.battery_capacity_mah AS battery, disp.display_size_inch
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE}
-          AND dn.brand IN ('Samsung', 'Xiaomi', 'Apple')
+        WHERE {_form_filter(form_factor)}
+          AND dn.brand IN ({brand_list})
           AND d.battery_capacity_mah IS NOT NULL
         """
     ).dropna()
@@ -744,7 +798,7 @@ def ht_battery_by_brand_and_size() -> dict:
     main_effect = next((row for row in anova if 'brand' in row['factor'] and ':' not in row['factor']), None)
     return _ht_response(
         name="Battery capacity differs by brand and device size?",
-        description="Two-way ANOVA on battery capacity (mAh) for Samsung / Xiaomi / Apple, factoring small vs large size.",
+        description=f"Two-way ANOVA on battery capacity (mAh) for {' / '.join(brands)}, factoring small vs large size.",
         test_block={"test": "two-way ANOVA", "anova": anova,
                     "p_value": main_effect["p_value"] if main_effect else None},
         groups=groups,
@@ -752,16 +806,26 @@ def ht_battery_by_brand_and_size() -> dict:
 
 
 @router.get("/ht-price-by-brand-and-size")
-def ht_price_by_brand_and_size() -> dict:
-    """HT5 — Two-way ANOVA: price ~ brand * size for Samsung/Xiaomi/Apple."""
+def ht_price_by_brand_and_size(form_factor: FormFactor = "phone") -> dict:
+    """HT5 — Two-way ANOVA: price ~ brand × size for the top-3 brands of
+    this form factor."""
+    brands = _top_brands(form_factor, 3)
+    if not brands:
+        return _ht_response(
+            name="Price differs by brand and device size?",
+            description="No brands available for this form factor.",
+            test_block={"test": "two-way ANOVA", "anova": [], "p_value": None},
+            groups=[],
+        )
+    brand_list = ", ".join(f"'{b.replace(chr(39), chr(39) * 2)}'" for b in brands)
     df = _df(
         f"""
         SELECT dn.brand, d.price_eur AS price, disp.display_size_inch
         FROM Device d
         JOIN Device_Name dn ON dn.id = d.device_name_id
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE}
-          AND dn.brand IN ('Samsung', 'Xiaomi', 'Apple')
+        WHERE {_form_filter(form_factor)}
+          AND dn.brand IN ({brand_list})
           AND d.price_eur IS NOT NULL
         """
     ).dropna()
@@ -774,7 +838,7 @@ def ht_price_by_brand_and_size() -> dict:
     main_effect = next((row for row in anova if 'brand' in row['factor'] and ':' not in row['factor']), None)
     return _ht_response(
         name="Price differs by brand and device size?",
-        description="Two-way ANOVA on price for Samsung / Xiaomi / Apple, factoring small vs large size.",
+        description=f"Two-way ANOVA on price for {' / '.join(brands)}, factoring small vs large size.",
         test_block={"test": "two-way ANOVA", "anova": anova,
                     "p_value": main_effect["p_value"] if main_effect else None},
         groups=groups,
@@ -782,14 +846,14 @@ def ht_price_by_brand_and_size() -> dict:
 
 
 @router.get("/ht-weight-by-size")
-def ht_weight_by_size() -> dict:
+def ht_weight_by_size(form_factor: FormFactor = "phone") -> dict:
     """HT6 — t-test (or Mann-Whitney U) on weight between small and large devices."""
     df = _df(
         f"""
         SELECT d.weight, disp.display_size_inch
         FROM Device d
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE} AND d.weight IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.weight IS NOT NULL
         """
     ).dropna()
     df['size'] = _classify_size(df['display_size_inch'])
@@ -811,14 +875,14 @@ def ht_weight_by_size() -> dict:
 
 
 @router.get("/ht-battery-by-cpu")
-def ht_battery_by_cpu() -> dict:
+def ht_battery_by_cpu(form_factor: FormFactor = "phone") -> dict:
     """One-way ANOVA: battery_capacity_mah ~ cpu_core_count."""
     df = _df(
         f"""
         SELECT d.battery_capacity_mah AS battery, p.cpu_core_count
         FROM Device d
         JOIN Platform p ON p.id = d.platform_id
-        WHERE {_PHONE} AND d.battery_capacity_mah IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.battery_capacity_mah IS NOT NULL
           AND p.cpu_core_count IS NOT NULL
         """
     ).dropna()
@@ -838,14 +902,14 @@ def ht_battery_by_cpu() -> dict:
 
 
 @router.get("/ht-price-by-chipset")
-def ht_price_by_chipset() -> dict:
+def ht_price_by_chipset(form_factor: FormFactor = "phone") -> dict:
     """One-way ANOVA: price ~ chipset_manufacturer."""
     df = _df(
         f"""
         SELECT d.price_eur AS price, p.chipset_manufacturer
         FROM Device d
         JOIN Platform p ON p.id = d.platform_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
           AND p.chipset_manufacturer IS NOT NULL
         """
     ).dropna()
@@ -865,14 +929,14 @@ def ht_price_by_chipset() -> dict:
 
 
 @router.get("/ht-price-by-main-camera")
-def ht_price_by_main_camera() -> dict:
+def ht_price_by_main_camera(form_factor: FormFactor = "phone") -> dict:
     """One-way ANOVA: price ~ main_cameras_num."""
     df = _df(
         f"""
         SELECT d.price_eur AS price, c.main_cameras_num
         FROM Device d
         JOIN Camera c ON c.id = d.camera_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
           AND c.main_cameras_num IS NOT NULL
         """
     ).dropna()
@@ -897,7 +961,7 @@ def ht_price_by_main_camera() -> dict:
 
 
 @router.get("/price-regression-specs")
-def price_regression_specs() -> dict:
+def price_regression_specs(form_factor: FormFactor = "phone") -> dict:
     """OLS: price ~ battery + weight + display_size + resolution_pixels +
     screen_to_body_ratio + ppi_density. Mirrors notebook cell 74."""
     df = _df(
@@ -911,7 +975,7 @@ def price_regression_specs() -> dict:
                disp.ppi_density
         FROM Device d
         JOIN Display disp ON disp.id = d.display_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
     ).dropna()
     summary = _ols_summary(
@@ -931,14 +995,14 @@ def price_regression_specs() -> dict:
 
 
 @router.get("/price-regression-os")
-def price_regression_os() -> dict:
+def price_regression_os(form_factor: FormFactor = "phone") -> dict:
     """OLS: price ~ OS dummies (one-hot, drop-first). Mirrors notebook cell 18."""
     df = _df(
         f"""
         SELECT d.price_eur AS price, o.os_name
         FROM Device d
         JOIN OS o ON o.id = d.os_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL AND o.os_name IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL AND o.os_name IS NOT NULL
         """
     ).dropna()
     summary = _ols_summary('price ~ C(os_name)', df)
@@ -953,7 +1017,7 @@ def price_regression_os() -> dict:
     }
 
 
-def _full_model_data() -> pd.DataFrame:
+def _full_model_data(form_factor: str) -> pd.DataFrame:
     """Pull the catalogue with every candidate predictor present.
 
     Shared by `/price-regression-full`, `/price-residuals`, and
@@ -978,7 +1042,7 @@ def _full_model_data() -> pd.DataFrame:
         JOIN Display disp ON disp.id = d.display_id
         JOIN Platform p ON p.id = d.platform_id
         JOIN OS o ON o.id = d.os_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
     ).dropna()
 
@@ -997,7 +1061,7 @@ _RESIDUAL_FORMULAS = {
 
 
 @router.get("/price-residuals")
-def price_residuals(model: str = "full") -> dict:
+def price_residuals(model: str = "full", form_factor: FormFactor = "phone") -> dict:
     """Residual diagnostics for the OLS price model.
 
     Pass `model=specs` to inspect the simpler 6-numeric model, or `model=full`
@@ -1007,7 +1071,7 @@ def price_residuals(model: str = "full") -> dict:
     """
     if model not in _RESIDUAL_FORMULAS:
         return {"error": f"unknown model '{model}'; expected one of {list(_RESIDUAL_FORMULAS)}"}
-    df = _full_model_data()
+    df = _full_model_data(form_factor)
     formula = _RESIDUAL_FORMULAS[model]
     try:
         fit = ols(formula, data=df).fit()
@@ -1019,7 +1083,7 @@ def price_residuals(model: str = "full") -> dict:
 
 
 @router.get("/price-feature-selection")
-def price_feature_selection() -> dict:
+def price_feature_selection(form_factor: FormFactor = "phone") -> dict:
     """Forward stepwise selection over numeric and categorical predictors.
 
     Candidates: 9 numerics (battery, weight, display_size, resolution_pixels,
@@ -1029,7 +1093,7 @@ def price_feature_selection() -> dict:
     candidate improves it. Returns the path plus the final model's
     coefficients.
     """
-    df = _full_model_data()
+    df = _full_model_data(form_factor)
     candidates = [
         "battery_mah", "weight", "display_size_inch", "resolution_pixels",
         "screen_to_body_ratio", "ppi_density", "ram_gb", "storage_gb", "year",
@@ -1039,7 +1103,7 @@ def price_feature_selection() -> dict:
 
 
 @router.get("/price-regression-full")
-def price_regression_full() -> dict:
+def price_regression_full(form_factor: FormFactor = "phone") -> dict:
     """OLS with brand, chipset, year, RAM, storage + physical specs.
 
     The simpler `/price-regression-specs` model (R² ≈ 0.41) suffers from
@@ -1063,7 +1127,7 @@ def price_regression_full() -> dict:
         JOIN Device_Name dn ON dn.id = d.device_name_id
         JOIN Display disp ON disp.id = d.display_id
         JOIN Platform p ON p.id = d.platform_id
-        WHERE {_PHONE} AND d.price_eur IS NOT NULL
+        WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
     ).dropna()
     summary = _ols_summary(
