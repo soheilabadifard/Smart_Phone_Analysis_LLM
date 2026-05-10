@@ -707,14 +707,25 @@ def price_ci_2023(alpha: float = 0.02, form_factor: FormFactor = "phone") -> lis
 
 
 def _ht_response(name: str, description: str, test_block: dict,
-                 groups: list[dict], alpha: float = 0.05) -> dict:
+                 groups: list[dict],
+                 null_hypothesis: str = "",
+                 alternative_hypothesis: str = "",
+                 alpha: float = 0.05) -> dict:
     """Common envelope for hypothesis-test endpoints."""
+    p = test_block.get("p_value")
+    decision = (
+        "reject H₀" if (p is not None and p < alpha)
+        else ("fail to reject H₀" if p is not None else "insufficient data")
+    )
     return {
         "name": name,
         "description": description,
+        "null_hypothesis": null_hypothesis,
+        "alternative_hypothesis": alternative_hypothesis,
         **test_block,
         "alpha": alpha,
-        "conclusion": _conclusion(test_block.get("p_value"), alpha),
+        "decision": decision,
+        "conclusion": _conclusion(p, alpha),
         "groups": groups,
     }
 
@@ -742,6 +753,8 @@ def ht_price_by_sim_and_size(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Price differs by SIM type and device size?",
         description="Two-way ANOVA on price with SIM type (nano/micro/mini) and size (small/large) as factors.",
+        null_hypothesis="Mean price is the same across every SIM-type × size group.",
+        alternative_hypothesis="At least one SIM-type × size combination has a different mean price.",
         test_block={"test": "two-way ANOVA", "anova": anova,
                     "p_value": main_effect["p_value"] if main_effect else None},
         groups=groups,
@@ -766,6 +779,8 @@ def ht_ppi_by_size(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="PPI differs between small and large devices?",
         description="Two-sample test on screen PPI density. Small = display size <7\", large = ≥7\".",
+        null_hypothesis="Mean PPI density is the same in small and large devices.",
+        alternative_hypothesis="Mean PPI density differs between small and large devices.",
         test_block=test,
         groups=[
             {"size": "small", **_group_summary(small)},
@@ -792,6 +807,8 @@ def ht_weight_android_vs_ios(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Phone weight differs between Android and iOS?",
         description="Two-sample test on body weight (g) between Android and iOS phones.",
+        null_hypothesis="Mean body weight is the same on Android and iOS phones.",
+        alternative_hypothesis="Mean body weight differs between Android and iOS phones.",
         test_block=test,
         groups=[
             {"os_name": "Android", **_group_summary(android)},
@@ -834,6 +851,8 @@ def ht_battery_by_brand_and_size(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Battery capacity differs by brand and device size?",
         description=f"Two-way ANOVA on battery capacity (mAh) for {' / '.join(brands)}, factoring small vs large size.",
+        null_hypothesis="Mean battery capacity is the same across every brand × size group.",
+        alternative_hypothesis="At least one brand × size combination has a different mean battery capacity.",
         test_block={"test": "two-way ANOVA", "anova": anova,
                     "p_value": main_effect["p_value"] if main_effect else None},
         groups=groups,
@@ -874,6 +893,8 @@ def ht_price_by_brand_and_size(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Price differs by brand and device size?",
         description=f"Two-way ANOVA on price for {' / '.join(brands)}, factoring small vs large size.",
+        null_hypothesis="Mean price is the same across every brand × size group.",
+        alternative_hypothesis="At least one brand × size combination has a different mean price.",
         test_block={"test": "two-way ANOVA", "anova": anova,
                     "p_value": main_effect["p_value"] if main_effect else None},
         groups=groups,
@@ -898,6 +919,8 @@ def ht_weight_by_size(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Weight differs between small and large devices?",
         description="Two-sample test on body weight (g). Small = display <7\", large = ≥7\".",
+        null_hypothesis="Mean body weight is the same in small and large devices.",
+        alternative_hypothesis="Mean body weight differs between small and large devices.",
         test_block=test,
         groups=[
             {"size": "small", **_group_summary(small)},
@@ -930,6 +953,8 @@ def ht_battery_by_cpu(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Battery capacity differs by CPU core count?",
         description="One-way ANOVA on battery_capacity_mah grouped by CPU core count.",
+        null_hypothesis="Mean battery capacity is the same for every CPU core count.",
+        alternative_hypothesis="At least one CPU-core-count group has a different mean battery capacity.",
         test_block={"test": "one-way ANOVA", "anova": anova,
                     "p_value": main["p_value"] if main else None},
         groups=groups,
@@ -957,6 +982,8 @@ def ht_price_by_chipset(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Price differs by chipset manufacturer?",
         description="One-way ANOVA on price grouped by chipset manufacturer (Qualcomm / Mediatek / Apple / Exynos / …).",
+        null_hypothesis="Mean price is the same across all chipset manufacturers.",
+        alternative_hypothesis="At least one chipset manufacturer has a different mean price.",
         test_block={"test": "one-way ANOVA", "anova": anova,
                     "p_value": main["p_value"] if main else None},
         groups=groups,
@@ -984,6 +1011,8 @@ def ht_price_by_main_camera(form_factor: FormFactor = "phone") -> dict:
     return _ht_response(
         name="Price differs by main-camera count?",
         description="One-way ANOVA on price grouped by the number of rear cameras.",
+        null_hypothesis="Mean price is the same regardless of the number of rear cameras.",
+        alternative_hypothesis="At least one main-camera count has a different mean price.",
         test_block={"test": "one-way ANOVA", "anova": anova,
                     "p_value": main["p_value"] if main else None},
         groups=groups,
