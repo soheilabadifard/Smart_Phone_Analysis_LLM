@@ -11,7 +11,7 @@ import pytest
 
 from app.llm import client as llm_client
 from app.llm import pipeline as llm_pipeline
-from app.llm.client import extract_sql, initial_messages
+from app.llm.client import extract_sql, has_fenced_sql, initial_messages
 from app.llm.few_shot import EXAMPLES
 
 
@@ -47,6 +47,27 @@ class TestExtractSQL:
         assert extract_sql(text) == "SELECT 1"
 
 
+class TestHasFencedSQL:
+    """Used by the review loop: True ⇒ refinement, False ⇒ approval."""
+
+    def test_sql_tagged_block_is_refinement(self):
+        assert has_fenced_sql("```sql\nSELECT 1\n```") is True
+
+    def test_uppercase_sql_tag_is_refinement(self):
+        assert has_fenced_sql("```SQL\nSELECT 1\n```") is True
+
+    def test_bare_fence_is_not_a_refinement(self):
+        # Bare ``` blocks (e.g. the model emitting prose in a code block)
+        # must be treated as approval, not as a SQL refinement.
+        assert has_fenced_sql("OK\n```\nthis isn't sql\n```") is False
+
+    def test_plain_ok_is_approval(self):
+        assert has_fenced_sql("OK") is False
+
+    def test_prose_only_is_approval(self):
+        assert has_fenced_sql("That looks correct.") is False
+
+
 # ---------------------------------------------------------------------------
 # initial_messages
 # ---------------------------------------------------------------------------
@@ -75,11 +96,12 @@ class TestInitialMessages:
         assert msgs[-1] == {"role": "user", "content": "how many phones?"}
 
     def test_system_prompt_mentions_security_rules(self):
-        # Critical rule the system prompt must communicate
+        # Critical rules the system prompt must communicate. REPLACE is in the
+        # guard's _DISALLOWED list too — keep them in sync.
         sys_content = initial_messages("x")[0]["content"]
-        assert "INSERT" in sys_content
-        assert "SELECT" in sys_content
-        assert "DROP" in sys_content
+        for kw in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+                   "TRUNCATE", "CREATE", "MERGE", "REPLACE", "SELECT"):
+            assert kw in sys_content, f"system prompt missing keyword {kw!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -226,16 +248,24 @@ class TestPipelineReview:
         assert result.attempts[-1].judgment == "OK"
 
     def test_oscillation_guard(self, monkeypatch):
+        """When the model refines to a previously-executed SQL, return the
+        most-recent stored last_success (which is exec #2's SQL, not exec #1).
+        """
         responses = iter([
-            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
-            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",
-            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # same as #1
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # exec1
+            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # review refines → exec2
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # refines back → oscillation
         ])
         monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
 
         result = llm_pipeline.answer_question("anything")
-        # Loop should detect the duplicate SQL and bail with last successful result.
-        assert any(a.judgment and "oscillation" in a.judgment for a in result.attempts)
+        # Last attempt is the oscillation-guard review entry.
+        assert result.attempts[-1].kind == "review"
+        assert result.attempts[-1].succeeded
+        assert "oscillation" in (result.attempts[-1].judgment or "")
+        # Returns the second-stored last_success (the refinement that *did* run),
+        # not the first.
+        assert result.sql == "SELECT model FROM Device_Name LIMIT 1"
 
     def test_verify_off_skips_review(self, monkeypatch):
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
