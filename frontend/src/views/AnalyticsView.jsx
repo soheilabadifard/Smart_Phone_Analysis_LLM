@@ -245,15 +245,32 @@ function FeatureSelectionPanel({ data }) {
 
 function HypothesisTestPanel({ data }) {
   if (!data) return null
-  const { name, description, test, p_value, conclusion, anova, groups } = data
+  const { name, description, test, p_value, conclusion, decision, anova, groups,
+          null_hypothesis, alternative_hypothesis, alpha = 0.05 } = data
+  const reject = p_value !== null && p_value !== undefined && p_value < alpha
+  const decisionColor = p_value === null || p_value === undefined ? '#9aa0a6'
+                      : reject ? '#9bd17a' : '#e0c060'
   return (
     <div style={{ borderTop: '1px solid #2a2f38', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
       <strong>{name}</strong>
       <div style={{ color: '#9aa0a6', fontSize: '0.9em', margin: '0.25rem 0' }}>{description}</div>
+      {(null_hypothesis || alternative_hypothesis) && (
+        <div style={{ background: '#1d2227', borderRadius: 4, padding: '0.5rem 0.7rem',
+                      margin: '0.4rem 0', fontSize: '0.92em' }}>
+          {null_hypothesis && <div><b>H₀:</b> <span style={{ color: '#cfd5dc' }}>{null_hypothesis}</span></div>}
+          {alternative_hypothesis && <div><b>H₁:</b> <span style={{ color: '#cfd5dc' }}>{alternative_hypothesis}</span></div>}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', fontSize: '0.95em' }}>
         <span><b>Test:</b> {test}</span>
-        <span><b>p-value:</b> {p_value === null ? '—' : fmt(p_value, 4)}</span>
-        <span><b>Conclusion:</b> <span style={{ color: p_value !== null && p_value < 0.05 ? '#ff7e7e' : '#9bd17a' }}>{conclusion}</span></span>
+        <span><b>p-value:</b> {p_value === null || p_value === undefined ? '—' : fmt(p_value, 4)}</span>
+        <span><b>α:</b> {fmt(alpha, 2)}</span>
+        <span>
+          <b>Result:</b>{' '}
+          <span style={{ color: decisionColor, fontWeight: 600 }}>
+            {decision || conclusion}
+          </span>
+        </span>
       </div>
       {anova && anova.length > 0 && (
         <table style={{ marginTop: '0.5rem', fontSize: '0.9em' }}>
