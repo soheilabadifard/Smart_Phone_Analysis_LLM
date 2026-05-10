@@ -24,6 +24,7 @@ const RESPONSES = {
   ],
   'correlation-matrix': { columns: ['weight', 'price_eur'], matrix: [[1.0, 0.4], [0.4, 1.0]] },
   'quantitative-distributions': { weight: [170, 180, 190], price_eur: [500, 700, 900] },
+  'available-years': [2024, 2023, 2022, 2021, 2020],
   'price-ci-by-brand': [
     { brand: 'Apple', n: 12, mean: 1200, std: 200, lower: 1100, upper: 1300, alpha: 0.05, year: 2024 },
     { brand: 'Samsung', n: 30, mean: 800, std: 150, lower: 750, upper: 850, alpha: 0.05, year: 2024 },
@@ -238,6 +239,9 @@ describe('AnalyticsView', () => {
     // Section 3
     expect(screen.getByText(/Average price by brand/i)).toBeInTheDocument()
     expect(screen.getByText(/Average battery capacity by brand/i)).toBeInTheDocument()
+    expect(screen.getByText(/Confidence-interval controls/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Year for price CI/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Alpha for confidence intervals/i)).toBeInTheDocument()
     expect(screen.getByText(/Hypothesis tests/i)).toBeInTheDocument()
 
     // Section 4
