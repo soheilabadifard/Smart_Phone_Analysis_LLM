@@ -107,24 +107,94 @@ class DataPreProcess:
         self.df['Selfie camera_Features'] = self.df['Selfie camera_Features'].apply(self.get_features_list)
 
     def demintions_process(self):
+        # Body_Dimensions takes several shapes on GSMArena:
+        #   - Standard "147.6 x 71.6 x 7.8 mm"  (3 axes — happy path)
+        #   - "247 x 179 mm"                     (2D, no thickness)
+        #   - "156.8 x Unknown x 8 mm"           (length + thickness, width missing)
+        #   - "8.1 mm thickness"                 (thickness only — typically a
+        #                                          phone GSMArena hasn't sized yet)
+        #   - "Folded thickness: 10 mm"          (foldable with only folded depth)
+        #   - "100 cc"                           (volume only)
+        #   - "-"                                (placeholder for missing data)
+        # Partial extraction populates whichever axes we can parse and leaves
+        # the rest NaN. Only rows that match no pattern at all count as
+        # parse failures in the diagnostic.
+        pat_three = re.compile(
+            r'(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*mm',
+            re.IGNORECASE,
+        )
+        pat_partial_xyz = re.compile(
+            r'(\d+(?:\.\d+)?)\s*x\s*(?:unknown|x\.x|-)\s*x\s*(\d+(?:\.\d+)?)\s*mm',
+            re.IGNORECASE,
+        )
+        pat_two = re.compile(
+            r'(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*mm\b',
+            re.IGNORECASE,
+        )
+        pat_thickness = re.compile(
+            r'(\d+(?:\.\d+)?)\s*mm\s*thick', re.IGNORECASE,
+        )
+        pat_thickness_label = re.compile(
+            r'thickness[^0-9]*(\d+(?:\.\d+)?)\s*mm', re.IGNORECASE,
+        )
+        pat_volume = re.compile(r'(\d+(?:\.\d+)?)\s*cc\b', re.IGNORECASE)
+
         length, width, height, volume = [], [], [], []
         nan_input = 0
         parse_fail = 0
         for x in list(self.df['Body_Dimensions']):
-            if pd.isna(x):
+            if pd.isna(x) or (isinstance(x, str) and x.strip() in ('', '-')):
                 length.append(np.nan); width.append(np.nan)
                 height.append(np.nan); volume.append(np.nan)
                 nan_input += 1
                 continue
-            tokens = re.findall(r'(\d+(?:\.\d+)?)', x) if isinstance(x, str) else []
-            try:
-                l, w, h = float(tokens[0]), float(tokens[1]), float(tokens[2])
-                length.append(l); width.append(w); height.append(h)
-                volume.append(l * w * h)
-            except (IndexError, ValueError, TypeError):
+            if not isinstance(x, str):
                 length.append(np.nan); width.append(np.nan)
                 height.append(np.nan); volume.append(np.nan)
                 parse_fail += 1
+                continue
+
+            m = pat_three.search(x)
+            if m:
+                l, w, h = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                length.append(l); width.append(w); height.append(h)
+                volume.append(l * w * h)
+                continue
+
+            # "L x Unknown x H mm" — keep length and thickness, width = NaN.
+            m = pat_partial_xyz.search(x)
+            if m:
+                length.append(float(m.group(1))); width.append(np.nan)
+                height.append(float(m.group(2))); volume.append(np.nan)
+                continue
+
+            # "L x W mm" — 2D dimensions, no thickness.
+            m = pat_two.search(x)
+            if m:
+                length.append(float(m.group(1))); width.append(float(m.group(2)))
+                height.append(np.nan); volume.append(np.nan)
+                continue
+
+            # Thickness-only forms, e.g. "8.1 mm thickness" or
+            # "Folded thickness: 10 mm".
+            m = pat_thickness.search(x) or pat_thickness_label.search(x)
+            if m:
+                length.append(np.nan); width.append(np.nan)
+                height.append(float(m.group(1))); volume.append(np.nan)
+                continue
+
+            # Volume-only ("100 cc").
+            m = pat_volume.search(x)
+            if m:
+                length.append(np.nan); width.append(np.nan)
+                height.append(np.nan); volume.append(float(m.group(1)))
+                continue
+
+            # Nothing matched — true parse failure.
+            length.append(np.nan); width.append(np.nan)
+            height.append(np.nan); volume.append(np.nan)
+            parse_fail += 1
+
         _report_cleaner_misses('demintions_process', parse_fail, nan_input)
         self.df['length'] = length
         self.df['width'] = width
@@ -136,7 +206,8 @@ class DataPreProcess:
         nan_input = 0
         parse_fail = 0
         for x in list(self.df['Body_Weight']):
-            if pd.isna(x):
+            # NaN or GSMArena's "-" placeholder → semantic missing value.
+            if pd.isna(x) or (isinstance(x, str) and x.strip() in ('', '-')):
                 weight.append(np.nan)
                 nan_input += 1
                 continue
