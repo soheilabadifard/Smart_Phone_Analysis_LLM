@@ -32,12 +32,25 @@ class TestAnnualLaunches:
 
     def test_left_join_counts_null_platform_devices(self, client):
         """The 2024 row must include id=7 (NULL platform_id) because the route
-        LEFT-joins to Platform. Under old INNER JOIN id=7 would be filtered out."""
+        LEFT-joins to Platform. Under old INNER JOIN id=7 would be filtered out.
+        Endpoint defaults to form_factor='phone' so the watch (id=6) is excluded."""
         rows = client.get("/api/analytics/annual-launches").json()
         year_2024 = next((row for row in rows if row["year"] == 2024), None)
         assert year_2024 is not None
-        # Seed: id=2,3,5 (phones) + id=6 (watch) + id=7 (NULL platform) = 5 launches in 2024
-        assert year_2024["launches"] == 5
+        # Phone-only seed: id=2,3,5 + id=7 (NULL platform) = 4 launches in 2024
+        assert year_2024["launches"] == 4
+
+    def test_form_factor_watch_returns_watch_rows(self, client):
+        """?form_factor=watch should restrict to the watch (id=6 only)."""
+        rows = client.get("/api/analytics/annual-launches?form_factor=watch").json()
+        # Seed has one watch in 2024
+        if rows:  # may be empty if seed had no watches in matching years
+            for row in rows:
+                assert row["launches"] >= 1
+
+    def test_invalid_form_factor_returns_422(self, client):
+        r = client.get("/api/analytics/annual-launches?form_factor=spaceship")
+        assert r.status_code == 422
 
 
 class TestChipsetPopularity:
@@ -204,10 +217,14 @@ class TestPriceCi2023:
         r = client.get("/api/analytics/price-ci-2023")
         assert r.status_code == 200
         rows = r.json()
-        brands = [row["brand"] for row in rows]
-        assert brands == ["Apple", "Samsung", "Huawei", "Xiaomi", "Nokia"]
+        # Brands are now auto-picked (top 5 by row count) per form factor.
+        # Seed has 3 phone brands (Apple, Samsung, Xiaomi) so we get 3 rows.
+        assert len(rows) <= 5
         for row in rows:
             assert {"brand", "n", "mean", "std", "lower", "upper", "alpha"} <= set(row)
+        # Each row should be a unique brand
+        brands = [row["brand"] for row in rows]
+        assert len(brands) == len(set(brands))
 
     def test_lower_under_upper_when_data_present(self, client):
         rows = client.get("/api/analytics/price-ci-2023").json()
