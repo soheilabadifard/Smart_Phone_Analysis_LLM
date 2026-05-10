@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import (
-    CheckConstraint, Column, Float, ForeignKey, Integer, MetaData, String,
+    CheckConstraint, Column, Float, ForeignKey, Index, Integer, MetaData, String,
     UniqueConstraint, text,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -318,6 +318,17 @@ class Device(Base):
     __tablename__ = 'Device'
     __table_args__ = (
         UniqueConstraint('device_key', name='uq_device_key'),
+        # Secondary indexes covering the three columns every analytics query
+        # filters / orders / groups on:
+        #   - year  → /annual-launches GROUP BY, "since 2015" range filter
+        #   - price_eur → top-expensive-phones ORDER BY, R1 brand-summary AVG
+        #   - form_factor → the per-tab WHERE clause on every analytics route
+        # InnoDB already creates a backing index on each FK and UNIQUE constraint,
+        # so the dim joins are covered; these three indexes target the
+        # remaining hot columns on the fact table.
+        Index('idx_device_year', 'year'),
+        Index('idx_device_price_eur', 'price_eur'),
+        Index('idx_device_form_factor', 'form_factor'),
         CheckConstraint('price_eur >= 0', name='ck_price_eur_min'),
         CheckConstraint('year BETWEEN 1995 AND 2030', name='ck_year_range'),
         CheckConstraint('battery_capacity_mah > 0', name='ck_battery_capacity_pos'),
