@@ -10,6 +10,14 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _disable_explanation(monkeypatch):
+    """Default: turn off the explanation turn for these tests so they don't
+    have to budget an extra chat() call. The explanation feature itself is
+    covered in test_llm_client.py::TestPipelineExplanation."""
+    monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+
+
 class TestAskSuccess:
     """Verification on (default): execute → review → approve = 2 chat calls,
     surfaced as 2 attempts ('execution' kind that succeeded, then 'review'
