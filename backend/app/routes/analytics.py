@@ -305,6 +305,41 @@ def _forward_stepwise(data: pd.DataFrame, response: str,
     }
 
 
+def _safe_ols_fit(df: pd.DataFrame, response: str,
+                  numeric: list[str], categorical: list[str],
+                  min_rows: int = 10) -> dict:
+    """Fit OLS resiliently — drops predictors whose column is entirely NaN
+    (e.g. `screen_to_body_ratio` for watches, where GSMArena doesn't publish
+    a S2B figure). The previous code called `df.dropna()` first, which would
+    delete every row whenever any single predictor was 100% NaN.
+
+    Returns the same shape as `_ols_summary`, plus `dropped_predictors`
+    listing the columns that were excluded for this form factor.
+    """
+    available_num = [c for c in numeric if c in df.columns and df[c].notna().any()]
+    available_cat = [c for c in categorical if c in df.columns and df[c].notna().any()]
+    dropped = [c for c in numeric + categorical
+               if c not in available_num + available_cat]
+
+    keep_cols = [response] + available_num + available_cat
+    df_clean = df[keep_cols].dropna()
+
+    if not available_num and not available_cat:
+        return {"error": "no usable predictors for this form factor",
+                "n": 0, "dropped_predictors": dropped, "coefficients": []}
+    if len(df_clean) < min_rows:
+        return {"error": f"only {len(df_clean)} rows after dropna; need ≥{min_rows}",
+                "n": len(df_clean), "dropped_predictors": dropped,
+                "coefficients": []}
+
+    terms = available_num + [f'C({c})' for c in available_cat]
+    formula = f"{response} ~ " + ' + '.join(terms)
+    summary = _ols_summary(formula, df_clean)
+    summary['dropped_predictors'] = dropped
+    summary['formula'] = formula
+    return summary
+
+
 def _ols_summary(model_formula: str, data: pd.DataFrame) -> dict:
     """Fit OLS and return coefficient table + overall fit stats.
 
@@ -977,18 +1012,19 @@ def price_regression_specs(form_factor: FormFactor = "phone") -> dict:
         JOIN Display disp ON disp.id = d.display_id
         WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
-    ).dropna()
-    summary = _ols_summary(
-        'price ~ battery_mah + weight + display_size_inch + resolution_pixels '
-        '+ screen_to_body_ratio + ppi_density',
-        df,
+    )
+    summary = _safe_ols_fit(
+        df, response='price',
+        numeric=['battery_mah', 'weight', 'display_size_inch',
+                 'resolution_pixels', 'screen_to_body_ratio', 'ppi_density'],
+        categorical=[],
     )
     return {
         "name": "Price ~ physical specs (multivariate OLS)",
         "description": (
-            "Predict price (€) from six numeric specs. "
-            "Each row in `coefficients` shows the partial slope and its p-value; "
-            "R² is the share of price variance the model explains."
+            "Predict price (€) from numeric specs. "
+            "Predictors that are entirely NaN for this form factor are dropped "
+            "automatically (see `dropped_predictors`)."
         ),
         **summary,
     }
@@ -1021,7 +1057,10 @@ def _full_model_data(form_factor: str) -> pd.DataFrame:
     """Pull the catalogue with every candidate predictor present.
 
     Shared by `/price-regression-full`, `/price-residuals`, and
-    `/price-feature-selection` so they all fit on the same row set.
+    `/price-feature-selection`. Does NOT call `.dropna()` — when one
+    predictor is entirely NaN for a form factor (e.g. screen_to_body_ratio
+    on watches), a global dropna would delete every row. Callers must
+    drop empty predictor columns first (see `_safe_ols_fit`).
     """
     return _df(
         f"""
@@ -1044,19 +1083,20 @@ def _full_model_data(form_factor: str) -> pd.DataFrame:
         JOIN OS o ON o.id = d.os_id
         WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
-    ).dropna()
+    )
 
 
-_RESIDUAL_FORMULAS = {
-    "specs": (
-        "price ~ battery_mah + weight + display_size_inch + resolution_pixels "
-        "+ screen_to_body_ratio + ppi_density"
-    ),
-    "full": (
-        "price ~ battery_mah + weight + display_size_inch + resolution_pixels "
-        "+ screen_to_body_ratio + ram_gb + storage_gb + year "
-        "+ C(brand) + C(chipset_manufacturer)"
-    ),
+_RESIDUAL_PREDICTORS = {
+    "specs": {
+        "numeric": ['battery_mah', 'weight', 'display_size_inch',
+                    'resolution_pixels', 'screen_to_body_ratio', 'ppi_density'],
+        "categorical": [],
+    },
+    "full": {
+        "numeric": ['battery_mah', 'weight', 'display_size_inch', 'resolution_pixels',
+                    'screen_to_body_ratio', 'ram_gb', 'storage_gb', 'year'],
+        "categorical": ['brand', 'chipset_manufacturer'],
+    },
 }
 
 
@@ -1064,21 +1104,36 @@ _RESIDUAL_FORMULAS = {
 def price_residuals(model: str = "full", form_factor: FormFactor = "phone") -> dict:
     """Residual diagnostics for the OLS price model.
 
-    Pass `model=specs` to inspect the simpler 6-numeric model, or `model=full`
-    for the brand+chipset+year-augmented one. Returns sample fitted/residual
-    pairs, QQ-plot data, Breusch-Pagan, Jarque-Bera, VIF, Cook's distance
-    top-10, and outlier counts.
+    Pass `model=specs` to inspect the simpler numeric-only model, or `model=full`
+    for the brand+chipset+year-augmented one. Predictors entirely NaN for the
+    given form factor (e.g. `screen_to_body_ratio` for watches) are dropped
+    automatically; the actual fitted formula is returned in `formula`.
     """
-    if model not in _RESIDUAL_FORMULAS:
-        return {"error": f"unknown model '{model}'; expected one of {list(_RESIDUAL_FORMULAS)}"}
+    if model not in _RESIDUAL_PREDICTORS:
+        return {"error": f"unknown model '{model}'; expected one of {list(_RESIDUAL_PREDICTORS)}"}
     df = _full_model_data(form_factor)
-    formula = _RESIDUAL_FORMULAS[model]
+    spec = _RESIDUAL_PREDICTORS[model]
+
+    available_num = [c for c in spec['numeric'] if c in df.columns and df[c].notna().any()]
+    available_cat = [c for c in spec['categorical'] if c in df.columns and df[c].notna().any()]
+    dropped = [c for c in spec['numeric'] + spec['categorical']
+               if c not in available_num + available_cat]
+    keep = ['price'] + available_num + available_cat
+    df_clean = df[keep].dropna()
+
+    if not (available_num or available_cat) or len(df_clean) < 10:
+        return {"error": f"insufficient data: {len(df_clean)} rows after dropping empty predictors",
+                "model": model, "dropped_predictors": dropped, "n": len(df_clean)}
+
+    terms = available_num + [f'C({c})' for c in available_cat]
+    formula = f"price ~ " + ' + '.join(terms)
     try:
-        fit = ols(formula, data=df).fit()
+        fit = ols(formula, data=df_clean).fit()
     except (ValueError, np.linalg.LinAlgError) as exc:
-        return {"error": str(exc), "model": model}
+        return {"error": str(exc), "model": model, "dropped_predictors": dropped}
     diagnostics = _residual_diagnostics(fit)
-    return {"model": model, "formula": formula, "r_squared": float(fit.rsquared),
+    return {"model": model, "formula": formula, "dropped_predictors": dropped,
+            "r_squared": float(fit.rsquared),
             "adj_r_squared": float(fit.rsquared_adj), **diagnostics}
 
 
@@ -1110,6 +1165,8 @@ def price_regression_full(form_factor: FormFactor = "phone") -> dict:
     omitted-variable bias because brand / year / chipset are huge price
     drivers it cannot see. This endpoint adds them. `ppi_density` is
     intentionally dropped (perfectly collinear with resolution + size).
+    Predictors entirely NaN for the given form factor are dropped
+    automatically (see `dropped_predictors`).
     """
     df = _df(
         f"""
@@ -1129,12 +1186,13 @@ def price_regression_full(form_factor: FormFactor = "phone") -> dict:
         JOIN Platform p ON p.id = d.platform_id
         WHERE {_form_filter(form_factor)} AND d.price_eur IS NOT NULL
         """
-    ).dropna()
-    summary = _ols_summary(
-        'price ~ battery_mah + weight + display_size_inch + resolution_pixels '
-        '+ screen_to_body_ratio + ram_gb + storage_gb + year '
-        '+ C(brand) + C(chipset_manufacturer)',
-        df,
+    )
+    summary = _safe_ols_fit(
+        df, response='price',
+        numeric=['battery_mah', 'weight', 'display_size_inch',
+                 'resolution_pixels', 'screen_to_body_ratio',
+                 'ram_gb', 'storage_gb', 'year'],
+        categorical=['brand', 'chipset_manufacturer'],
     )
     return {
         "name": "Price ~ all predictors (full OLS)",
