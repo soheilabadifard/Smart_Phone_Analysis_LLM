@@ -157,6 +157,14 @@ class DataPreProcess:
             self.df[dst] = self.df[src].notna().astype(int)
 
     def battery_capacity_process(self):
+        # Anchor on the literal 'mAh' suffix so we never confuse Wh, V, or W
+        # numbers for capacity. A typical row looks like
+        # "Li-Ion 3349 mAh, non-removable" or "Li-Ion 303.8 mAh (1.19 Wh)".
+        # Tablets sometimes use a thousands separator: "Li-Po 10,050 mAh" — we
+        # allow commas inside the digit run and strip them before parsing.
+        # Watt-hour-only entries (e.g. "Li-Po (25 Wh)") return NaN — without
+        # the cell voltage we can't safely convert Wh to mAh.
+        pattern = re.compile(r'(\d[\d,]*(?:\.\d+)?)\s*mAh', re.IGNORECASE)
         battery_capacity = []
         nan_input = 0
         parse_fail = 0
@@ -165,10 +173,16 @@ class DataPreProcess:
                 battery_capacity.append(np.nan)
                 nan_input += 1
                 continue
+            match = pattern.search(x)
+            if match is None:
+                battery_capacity.append(np.nan)
+                parse_fail += 1
+                continue
             try:
-                m = re.findall(r'(\d+)', x)
-                battery_capacity.append(int(m[0]))
-            except (IndexError, ValueError, TypeError):
+                # Strip thousands separator before float conversion.
+                # round() collapses 303.8 → 304 (schema is integer mAh).
+                battery_capacity.append(round(float(match.group(1).replace(',', ''))))
+            except (ValueError, TypeError):
                 battery_capacity.append(np.nan)
                 parse_fail += 1
         _report_cleaner_misses('battery_capacity_process', parse_fail, nan_input)
