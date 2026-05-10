@@ -1,5 +1,17 @@
 import re
 import sys
+
+
+def _report_cleaner_misses(method: str, parse_fail: int, nan_input: int) -> None:
+    """Print a per-method diagnostic separating real parse failures (a column
+    has a value but the cleaner couldn't extract from it) from missing-source
+    rows (the column was NaN to begin with). Empty inputs are normal data
+    incompleteness; non-zero parse_fail is the actionable signal."""
+    if parse_fail or nan_input:
+        print(
+            f"{method}: {parse_fail} unparseable, {nan_input} empty",
+            file=sys.stderr,
+        )
 from pathlib import Path
 
 import numpy as np
@@ -96,8 +108,14 @@ class DataPreProcess:
 
     def demintions_process(self):
         length, width, height, volume = [], [], [], []
-        failed = 0
+        nan_input = 0
+        parse_fail = 0
         for x in list(self.df['Body_Dimensions']):
+            if pd.isna(x):
+                length.append(np.nan); width.append(np.nan)
+                height.append(np.nan); volume.append(np.nan)
+                nan_input += 1
+                continue
             tokens = re.findall(r'(\d+(?:\.\d+)?)', x) if isinstance(x, str) else []
             try:
                 l, w, h = float(tokens[0]), float(tokens[1]), float(tokens[2])
@@ -106,9 +124,8 @@ class DataPreProcess:
             except (IndexError, ValueError, TypeError):
                 length.append(np.nan); width.append(np.nan)
                 height.append(np.nan); volume.append(np.nan)
-                failed += 1
-        if failed:
-            print(f"demintions_process: {failed} rows unparseable", file=sys.stderr)
+                parse_fail += 1
+        _report_cleaner_misses('demintions_process', parse_fail, nan_input)
         self.df['length'] = length
         self.df['width'] = width
         self.df['height'] = height
@@ -116,16 +133,20 @@ class DataPreProcess:
 
     def weight_process(self):
         weight = []
-        failed = 0
+        nan_input = 0
+        parse_fail = 0
         for x in list(self.df['Body_Weight']):
+            if pd.isna(x):
+                weight.append(np.nan)
+                nan_input += 1
+                continue
             try:
                 m = re.findall(r'(\d+(?:\.\d+)?)', x)
                 weight.append(float(m[0]))
             except (IndexError, ValueError, TypeError):
                 weight.append(np.nan)
-                failed += 1
-        if failed:
-            print(f"weight_process: {failed} rows unparseable", file=sys.stderr)
+                parse_fail += 1
+        _report_cleaner_misses('weight_process', parse_fail, nan_input)
         self.df['weight'] = weight
 
     def network_tech_process(self):
@@ -137,29 +158,37 @@ class DataPreProcess:
 
     def battery_capacity_process(self):
         battery_capacity = []
-        failed = 0
+        nan_input = 0
+        parse_fail = 0
         for x in list(self.df['Battery_Type']):
+            if pd.isna(x):
+                battery_capacity.append(np.nan)
+                nan_input += 1
+                continue
             try:
                 m = re.findall(r'(\d+)', x)
                 battery_capacity.append(int(m[0]))
             except (IndexError, ValueError, TypeError):
                 battery_capacity.append(np.nan)
-                failed += 1
-        if failed:
-            print(f"battery_capacity_process: {failed} rows unparseable", file=sys.stderr)
+                parse_fail += 1
+        _report_cleaner_misses('battery_capacity_process', parse_fail, nan_input)
         self.df['Battery_capacity'] = battery_capacity
 
     def sensors_process(self):
         sensors = []
-        failed = 0
+        nan_input = 0
+        parse_fail = 0
         for x in list(self.df['Features_Sensors']):
+            if pd.isna(x):
+                sensors.append(np.nan)
+                nan_input += 1
+                continue
             try:
                 sensors.append(x.split(','))
             except (AttributeError, TypeError):
                 sensors.append(np.nan)
-                failed += 1
-        if failed:
-            print(f"sensors_process: {failed} rows unparseable", file=sys.stderr)
+                parse_fail += 1
+        _report_cleaner_misses('sensors_process', parse_fail, nan_input)
         self.df['Sensors'] = sensors
 
     def extract_display_characteristics(self):
