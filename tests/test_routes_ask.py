@@ -7,6 +7,8 @@ exhausted-attempts failure.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 
@@ -16,6 +18,15 @@ def _disable_explanation(monkeypatch):
     have to budget an extra chat() call. The explanation feature itself is
     covered in test_llm_client.py::TestPipelineExplanation."""
     monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+
+
+@pytest.fixture(autouse=True)
+def _reset_sessions():
+    """Wipe in-memory session state between tests so they can't leak history."""
+    from app.routes import session_store
+    session_store.reset_all()
+    yield
+    session_store.reset_all()
 
 
 class TestAskSuccess:
@@ -123,25 +134,33 @@ class TestAskReviewLoop:
         assert "brand" in body["sql"]  # final accepted SQL is the refined one
 
     def test_oscillation_guard_breaks_loop(self, client, monkeypatch):
-        """If the LLM refines back to a SQL we already executed, accept the prior result."""
+        """If the LLM refines back to a SQL we already executed, accept the
+        FIRST successful result (the one previously stored in last_success).
+        """
         from app.llm import pipeline as pl
 
         responses = iter([
-            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # initial
-            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # review refines
-            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # refines back to first
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # initial — first success
+            "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # review refines (also runs)
+            "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # refines back to first → oscillation
         ])
         monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
 
         r = client.post("/api/ask", json={"question": "anything"})
         assert r.status_code == 200
         body = r.json()
-        # The pipeline should detect the loop and stop with the last succeeded SQL.
-        assert body["sql"] in ("SELECT brand FROM Device_Name LIMIT 1",
-                               "SELECT model FROM Device_Name LIMIT 1")
-        # An oscillation-guard attempt was added.
-        guards = [a for a in body["attempts"] if a.get("judgment") and "oscillation" in a["judgment"]]
-        assert len(guards) >= 1
+        # Contract: the oscillation guard accepts the *previously stored*
+        # last_success at the moment the duplicate fires. After exec1 then
+        # exec2, last_success == exec2's SQL (`model`), and the duplicate
+        # third candidate matches exec1 (`brand`). The guard returns the
+        # second (most-recently-stored) successful SQL.
+        assert body["sql"] == "SELECT model FROM Device_Name LIMIT 1"
+        # The oscillation-guard attempt is the LAST one logged.
+        last = body["attempts"][-1]
+        assert last["judgment"] is not None
+        assert "oscillation" in last["judgment"]
+        assert last["kind"] == "review"
+        assert last["succeeded"] is True
 
 
 class TestAskFailure:
@@ -168,3 +187,165 @@ class TestAskHealth:
         r = client.get("/api/health")
         assert r.status_code == 200
         assert r.json() == {"ok": True}
+
+
+class TestAskSessionMemory:
+    """Conversation memory: history is recorded after a successful ask and
+    surfaced on the next call within the same session."""
+
+    def test_first_call_mints_session_id(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setattr(
+            pl, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+        r = client.post("/api/ask", json={"question": "show one brand"})
+        assert r.status_code == 200
+        body = r.json()
+        assert "session_id" in body and body["session_id"]
+
+    def test_history_prepended_on_second_call(self, client, monkeypatch):
+        """Capture every chat() call's messages list; on the second call the
+        prepended history must include a turn referencing the first question."""
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+
+        captured = []
+
+        def capturing_chat(messages):
+            captured.append(list(messages))
+            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+
+        monkeypatch.setattr(pl, "chat", capturing_chat)
+
+        r1 = client.post("/api/ask", json={"question": "show brands"})
+        sid = r1.json()["session_id"]
+
+        r2 = client.post("/api/ask", json={"question": "now show models", "session_id": sid})
+        assert r2.status_code == 200
+
+        # First call: no prior turns. Second call: prior turn injected.
+        first_call_msgs = captured[0]
+        second_call_msgs = captured[1]
+        assert len(second_call_msgs) > len(first_call_msgs)
+        # The injected user turn must reference the earlier question.
+        injected = "\n".join(m["content"] for m in second_call_msgs if m["role"] == "user")
+        assert "show brands" in injected
+
+    def test_explicit_session_id_used_as_provided(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setattr(
+            pl, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+        r = client.post("/api/ask", json={"question": "x", "session_id": "my-fixed-id"})
+        assert r.json()["session_id"] == "my-fixed-id"
+
+    def test_failed_call_still_returns_session_id_in_detail(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_MAX_RETRIES", "1")
+        monkeypatch.setattr(
+            pl, "chat", lambda messages: "```sql\nDROP TABLE Device\n```",
+        )
+        r = client.post("/api/ask", json={"question": "x", "session_id": "abc123"})
+        assert r.status_code == 400
+        assert r.json()["detail"]["session_id"] == "abc123"
+
+    def test_reset_session_endpoint(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setattr(
+            pl, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+        sid = "to-reset"
+        client.post("/api/ask", json={"question": "x", "session_id": sid})
+        # Reset and verify history is empty by capturing the next call's messages.
+        r = client.delete(f"/api/ask/session/{sid}")
+        assert r.status_code == 200
+
+        captured = []
+
+        def capturing_chat(messages):
+            captured.append(list(messages))
+            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+
+        monkeypatch.setattr(pl, "chat", capturing_chat)
+        client.post("/api/ask", json={"question": "y", "session_id": sid})
+        # No injected "earlier question" content — only the new "y" question.
+        injected = "\n".join(m["content"] for m in captured[0] if m["role"] == "user")
+        assert "earlier question" not in injected
+
+
+class TestAskStream:
+    """Streaming endpoint: NDJSON events flow in order."""
+
+    def _events(self, response_text: str) -> list[dict]:
+        return [json.loads(line) for line in response_text.splitlines() if line]
+
+    def test_stream_emits_attempt_executed_result_session(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setattr(
+            pl, "chat",
+            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+        )
+
+        r = client.post("/api/ask/stream", json={"question": "show brands"})
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/x-ndjson")
+
+        events = self._events(r.text)
+        kinds = [e["type"] for e in events]
+        # attempt → executed → result → session, in that order
+        assert "attempt" in kinds
+        assert "executed" in kinds
+        assert "result" in kinds
+        assert kinds[-1] == "session"
+        # The executed event carries rows before the final result.
+        executed = next(e for e in events if e["type"] == "executed")
+        assert executed["columns"] == ["brand"]
+        assert len(executed["rows"]) == 1
+
+    def test_stream_records_history_for_session(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+
+        captured = []
+
+        def capturing_chat(messages):
+            captured.append(list(messages))
+            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+
+        monkeypatch.setattr(pl, "chat", capturing_chat)
+
+        # First streaming call mints a session
+        r1 = client.post("/api/ask/stream", json={"question": "first q"})
+        sess_event = next(json.loads(line) for line in r1.text.splitlines()[::-1] if line)
+        assert sess_event["type"] == "session"
+        sid = sess_event["session_id"]
+
+        # Second call (non-streaming) sees the history from the streamed turn
+        client.post("/api/ask", json={"question": "second q", "session_id": sid})
+        injected = "\n".join(m["content"] for m in captured[1] if m["role"] == "user")
+        assert "first q" in injected
+
+    def test_stream_emits_error_on_exhaustion(self, client, monkeypatch):
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_MAX_RETRIES", "2")
+        monkeypatch.setattr(
+            pl, "chat", lambda messages: "```sql\nDROP TABLE Device\n```",
+        )
+
+        r = client.post("/api/ask/stream", json={"question": "no good"})
+        assert r.status_code == 200
+        events = self._events(r.text)
+        # Two attempts (both rejected) + one error + session sentinel
+        assert sum(1 for e in events if e["type"] == "attempt") == 2
+        err = next(e for e in events if e["type"] == "error")
+        assert "after 2 attempts" in err["message"]
+        assert err["last_error"] is not None
