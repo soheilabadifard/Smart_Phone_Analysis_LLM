@@ -183,7 +183,7 @@ class TestBatteryProcess:
         })
         proc = DataPreProcess(df)
         proc.battery_capacity_process()
-        cap = proc.df["Battery_capactiy"].tolist()
+        cap = proc.df["Battery_capacity"].tolist()
         assert cap[0] == 3349
         assert cap[1] == 5000
         assert pd.isna(cap[2])
