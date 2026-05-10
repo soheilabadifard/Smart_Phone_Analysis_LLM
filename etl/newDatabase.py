@@ -396,7 +396,7 @@ class AddToTable:
             'SIM_count': 'sim_count',
             'Network_Technology': 'network_technology',
             'Launch_Status': 'launch_status',
-            'Battery_capactiy': 'battery_capacity_mah',
+            'Battery_capacity': 'battery_capacity_mah',
             'Display_Size_Inch': 'display_size_inch',
             'Display_Size_Cm': 'display_size_cm',
             'Screen_To_Body_Ratio': 'screen_to_body_ratio',
