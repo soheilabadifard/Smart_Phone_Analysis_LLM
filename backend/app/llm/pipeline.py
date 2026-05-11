@@ -25,12 +25,22 @@ per round — never redundantly at the top of the loop.
 """
 
 import os
+import sys
+import time
 from dataclasses import dataclass, field
+
+
+def _dbg(*parts: object) -> None:
+    """Conditional stderr trace — set ASK_DEBUG=1 to enable. Used to
+    pinpoint where the streaming pipeline stalls on specific questions
+    by emitting timestamped checkpoints to the uvicorn console."""
+    if os.getenv("ASK_DEBUG", "").lower() in {"1", "true", "yes"}:
+        print(f"[ask {time.time():.3f}]", *parts, file=sys.stderr, flush=True)
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db import ro_engine, rw_engine  # rw_engine: diagnostic-only, see _execute
+from app.db import ro_engine
 from app.llm.client import (
     chat,
     chat_stream,
@@ -166,12 +176,7 @@ def _execute(sql: str) -> tuple[list[str], list[dict], bool]:
     """
     cap = _row_cap()
     timeout = _statement_timeout_seconds()
-    # DIAGNOSTIC (2026-05-11): temporarily route through rw_engine() to
-    # rule out a gsm_readonly permission/connection issue. The sqlglot
-    # guard still rejects DML/DDL, but the DB-level SELECT-only safety
-    # layer is bypassed while this swap is in place. Revert to ro_engine()
-    # once the RAM-year-trend hang is understood.
-    eng = rw_engine()
+    eng = ro_engine()
     with eng.connect() as conn:
         if timeout > 0 and eng.dialect.name in {"mysql", "mariadb"}:
             try:
@@ -243,7 +248,7 @@ _SQL_MAX_TOKENS = 400
 _EXPLAIN_MAX_TOKENS = 600
 
 
-def _streamed_chat(messages: list[dict], phase: str):
+def _streamed_chat(messages: list[dict], phase: str):  # noqa: C901
     """Helper generator that wraps a chat call with phase + token events.
 
     Yields `phase` first, then `sql_token` events as tokens arrive, then
@@ -259,6 +264,7 @@ def _streamed_chat(messages: list[dict], phase: str):
     fence and *then* keep going before hitting stop.
     """
     yield {"type": "phase", "phase": phase}
+    _dbg(f"_streamed_chat ENTER phase={phase}")
     tokens: list[str] = []
     fence_break_enabled = phase in _FENCE_BREAK_PHASES
     if fence_break_enabled:
@@ -267,21 +273,32 @@ def _streamed_chat(messages: list[dict], phase: str):
     else:
         stop = None
         max_tokens = _EXPLAIN_MAX_TOKENS
+    token_count = 0
+    broke = False
     for tok in chat_stream(messages, stop=stop, max_tokens=max_tokens):
+        token_count += 1
         tokens.append(tok)
         yield {"type": "sql_token", "phase": phase, "content": tok}
         if fence_break_enabled and "".join(tokens).count("```") >= 2:
+            _dbg(f"_streamed_chat EARLY BREAK after {token_count} tokens, "
+                 f"last={tok[-30:]!r}")
+            broke = True
             break
+    if not broke:
+        _dbg(f"_streamed_chat for-loop EXITED naturally (chat_stream returned), "
+             f"token_count={token_count}")
     joined = "".join(tokens)
     # If the server fired on a stop sequence, the closing ``` isn't in the
     # output. Synthesise it so downstream `extract_sql` and the frontend's
     # `extractSqlFromPartial` both see a complete fenced block.
     if fence_break_enabled and joined.count("```") == 1:
+        _dbg("_streamed_chat SYNTHESISING closing fence (count was 1)")
         joined = joined.rstrip() + "\n```"
         # Also push the synthesised fence through as a final token so the
         # frontend's partialSql buffer ends with a closing fence.
         yield {"type": "sql_token", "phase": phase, "content": "\n```"}
         tokens.append("\n```")
+    _dbg(f"_streamed_chat RETURN joined.len={len(joined)} fences={joined.count('```')}")
     return joined
 
 
@@ -327,18 +344,25 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
     last_success: tuple[str, list[str], list[dict], bool] | None = None
 
     last_raw = yield from _streamed_chat(messages, phase="generating_sql")
+    _dbg(f"answer_question_events INITIAL CHAT DONE, last_raw.len={len(last_raw)}")
 
     def _push(att: Attempt):
         attempts.append(att)
         return _attempt_event(att, len(attempts) - 1)
 
     for _ in range(max_attempts):
+        _dbg("loop: extract_sql START")
         candidate = extract_sql(last_raw)
+        _dbg(f"loop: extract_sql DONE, candidate.len={len(candidate)}, "
+             f"first80={candidate[:80]!r}")
 
         try:
+            _dbg("loop: ensure_select_only START")
             safe_sql = ensure_select_only(candidate)
+            _dbg(f"loop: ensure_select_only DONE, safe_sql.len={len(safe_sql)}")
         except UnsafeSQLError as e:
             error = f"Refused unsafe SQL: {e}"
+            _dbg(f"loop: GUARD REJECTED: {error}")
             yield _push(Attempt(sql=candidate, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
@@ -351,10 +375,15 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
         # any time. Without this event the user stays on 'Generating SQL'
         # for as long as _execute runs.
         yield {"type": "phase", "phase": "executing_sql"}
+        _dbg("loop: yielded phase=executing_sql, about to call _execute")
         try:
+            t0 = time.time()
             cols, rows, truncated = _execute(safe_sql)
+            _dbg(f"loop: _execute DONE in {time.time()-t0:.3f}s, "
+                 f"rows={len(rows)}, truncated={truncated}")
         except SQLAlchemyError as e:
             error = f"{e.__class__.__name__}: {e}"
+            _dbg(f"loop: _execute SQLAlchemyError: {error}")
             yield _push(Attempt(sql=safe_sql, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
