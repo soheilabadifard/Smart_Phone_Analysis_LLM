@@ -125,6 +125,65 @@ class TestInitialMessages:
 
 
 # ---------------------------------------------------------------------------
+# _coerce_for_json: regression for the ROUND(AVG(...)) hang
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceForJSON:
+    """The streaming Ask route's `json.dumps(ev)` blows up silently on
+    Decimal values returned by MariaDB AVG / ROUND. _coerce_for_json
+    converts those (and dates/datetimes/times) at row-construction time so
+    every downstream serialiser sees plain Python primitives.
+    """
+
+    def test_decimal_becomes_float(self):
+        import decimal as _d
+        from app.llm.pipeline import _coerce_for_json
+        v = _coerce_for_json(_d.Decimal("9.27"))
+        assert isinstance(v, float)
+        assert v == 9.27
+
+    def test_int_passes_through(self):
+        from app.llm.pipeline import _coerce_for_json
+        assert _coerce_for_json(2024) == 2024
+        assert isinstance(_coerce_for_json(2024), int)
+
+    def test_str_passes_through(self):
+        from app.llm.pipeline import _coerce_for_json
+        assert _coerce_for_json("Apple") == "Apple"
+
+    def test_none_passes_through(self):
+        from app.llm.pipeline import _coerce_for_json
+        assert _coerce_for_json(None) is None
+
+    def test_datetime_becomes_iso_string(self):
+        import datetime as _dt
+        from app.llm.pipeline import _coerce_for_json
+        v = _coerce_for_json(_dt.datetime(2026, 5, 11, 12, 34, 56))
+        assert v == "2026-05-11T12:34:56"
+
+    def test_date_becomes_iso_string(self):
+        import datetime as _dt
+        from app.llm.pipeline import _coerce_for_json
+        v = _coerce_for_json(_dt.date(2026, 5, 11))
+        assert v == "2026-05-11"
+
+    def test_full_row_round_trips_through_json(self):
+        """End-to-end: a row containing a Decimal must survive json.dumps
+        after passing through _coerce_for_json. This pins the actual
+        regression that broke the streaming Ask route."""
+        import decimal as _d
+        import json as _json
+        from app.llm.pipeline import _coerce_for_json
+        raw_row = {"year": 2024, "device_count": 1237,
+                   "avg_ram_gb": _d.Decimal("9.87")}
+        coerced = {k: _coerce_for_json(v) for k, v in raw_row.items()}
+        # Without the coercion this would raise TypeError on the Decimal.
+        out = _json.loads(_json.dumps(coerced))
+        assert out == {"year": 2024, "device_count": 1237, "avg_ram_gb": 9.87}
+
+
+# ---------------------------------------------------------------------------
 # pipeline.answer_question — retry logic with mocked LLM and DB
 # ---------------------------------------------------------------------------
 
