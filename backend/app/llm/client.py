@@ -168,3 +168,28 @@ def chat(messages: list[dict]) -> str:
         max_tokens=800,
     )
     return resp.choices[0].message.content or ""
+
+
+def chat_stream(messages: list[dict]):
+    """Token-streaming variant of `chat()`. Yields the assistant's delta
+    content as it arrives so the streaming Ask route can emit token events.
+
+    Returns a generator; callers should `''.join(...)` the yielded tokens
+    when they need the full text. The OpenAI SDK's `stream=True` mode wraps
+    the SSE stream and yields chunks whose `.choices[0].delta.content` is
+    either a token string or None on the terminating chunk.
+    """
+    stream = _client().chat.completions.create(
+        model=os.getenv("MLX_MODEL", "mlx-community/Qwen2.5-Coder-32B-Instruct-bf16"),
+        messages=messages,
+        temperature=0.1,
+        max_tokens=800,
+        stream=True,
+    )
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        token = getattr(delta, "content", None)
+        if token:
+            yield token
