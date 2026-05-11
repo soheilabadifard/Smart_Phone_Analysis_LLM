@@ -14,7 +14,7 @@ interface driven by a locally hosted large language model.
 | **Backend** | FastAPI, 35 REST endpoints (Recommend / Analytics / Ask) |
 | **Frontend** | React + Vite + Plotly, 5 tabs (Recommend, Phone / Watch / Tablet Analytics, Ask) |
 | **NL→SQL** | Local MLX server (Qwen2.5-Coder-32B-Instruct-bf16) with `sqlglot` SELECT-only guard, bounded self-correction, result review, conversation memory, and token-level NDJSON streaming |
-| **Tests** | 455 backend (`pytest`) + 36 frontend (`vitest`) — both run in CI on every push |
+| **Tests** | 456 backend (`pytest`) + 36 frontend (`vitest`) — both run in CI on every push |
 
 The original course proposal and ER diagram are in
 [`Project_Proposal.pdf`](Project_Proposal.pdf). The full final report
@@ -131,7 +131,7 @@ UA rotation. Rebuild the resume state from existing artefacts with
 ```bash
 # Backend (from repo root)
 pip install -r backend/requirements.txt
-pytest -v                              # 455 cases
+pytest -v                              # 456 cases
 pytest tests/test_sql_guard.py         # one file
 pytest -k oscillation                  # by name
 
