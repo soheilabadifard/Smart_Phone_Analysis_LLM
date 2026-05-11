@@ -355,6 +355,47 @@ class TestAskStream:
         injected = "\n".join(m["content"] for m in captured[1] if m["role"] == "user")
         assert "first q" in injected
 
+    def test_stream_breaks_after_closing_fence(self, client, monkeypatch):
+        """Repro for the year-over-year RAM hang: the model emits a complete
+        fenced SQL block then keeps generating commentary. The pipeline must
+        break out of chat_stream as soon as the closing fence lands —
+        otherwise the user waits for ~max_tokens of dead output before the
+        pipeline ever runs the SQL.
+        """
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+
+        tokens_consumed = []
+
+        def trailing_commentary_chat_stream(messages):
+            # A realistic 8-token SQL block followed by 100 garbage tokens
+            # the early-break should NEVER consume.
+            sql_chunks = [
+                "```sql\n", "SELECT ", "year ", "FROM Device ", "LIMIT 1", "\n", "```",
+            ]
+            for t in sql_chunks:
+                tokens_consumed.append(t)
+                yield t
+            for i in range(100):
+                tokens_consumed.append(f"garbage_{i}")
+                yield f"garbage_{i}"
+
+        monkeypatch.setattr(pl, "chat_stream", trailing_commentary_chat_stream)
+
+        r = client.post("/api/ask/stream", json={"question": "anything"})
+        assert r.status_code == 200
+
+        # Only the 7 SQL chunks should have been pulled — no garbage.
+        assert tokens_consumed == [
+            "```sql\n", "SELECT ", "year ", "FROM Device ", "LIMIT 1", "\n", "```",
+        ]
+        # And the pipeline successfully reached the result event.
+        events = self._events(r.text)
+        types = [e["type"] for e in events]
+        assert "executed" in types
+        assert "result" in types
+
     def test_stream_emits_phase_and_sql_token_events(self, client, monkeypatch):
         """Token-level streaming: each chat_stream() call yields multiple
         tokens; the streaming route surfaces each as a sql_token event,
