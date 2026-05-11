@@ -1,8 +1,10 @@
 """Integration tests for /api/ask.
 
-Mocks app.llm.client.chat (and thus app.llm.pipeline.chat) per-test to drive
-the LLM through specific outcomes: success, retry-then-success, and
-exhausted-attempts failure.
+Mocks app.llm.client.chat_stream (the token-streaming primitive the pipeline
+now calls) per-test to drive the LLM through specific outcomes: success,
+retry-then-success, and exhausted-attempts failure. Each canned response is
+yielded as a single token chunk — token-level streaming is exercised in
+test_llm_client.py.
 """
 
 from __future__ import annotations
@@ -10,6 +12,23 @@ from __future__ import annotations
 import json
 
 import pytest
+
+
+def _chat_stream_from_iter(responses):
+    """Build a `chat_stream`-shaped generator function that yields each
+    pre-canned response as a single token. Each call consumes one entry
+    from `responses`, mirroring how the iterator-of-strings mocks used to
+    drive the non-streaming `chat()` primitive.
+
+    Accepts either a list or an already-instantiated iterator (existing
+    tests build `responses = iter([...])` so we don't double-wrap).
+    """
+    it = responses if hasattr(responses, "__next__") else iter(responses)
+
+    def _impl(messages):
+        yield next(it)
+
+    return _impl
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +60,7 @@ class TestAskSuccess:
             "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",
             "OK",  # review approves
         ])
-        monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(pl, "chat_stream", _chat_stream_from_iter(responses))
 
         r = client.post("/api/ask", json={"question": "show me brands"})
         assert r.status_code == 200
@@ -64,7 +83,8 @@ class TestAskSuccess:
 
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            pl, "chat", lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```"
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 2\n```"]),
         )
         r = client.post("/api/ask", json={"question": "show me brands"})
         assert r.status_code == 200
@@ -82,7 +102,7 @@ class TestAskRetry:
             "```sql\nDROP TABLE Device\n```",  # rejected by guard
             "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # ok
         ])
-        monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(pl, "chat_stream", _chat_stream_from_iter(responses))
 
         r = client.post("/api/ask", json={"question": "any question"})
         assert r.status_code == 200
@@ -100,7 +120,7 @@ class TestAskRetry:
             "```sql\nSELECT bogus_col FROM Device_Name\n```",  # SQL error
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
         ])
-        monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(pl, "chat_stream", _chat_stream_from_iter(responses))
 
         r = client.post("/api/ask", json={"question": "x"})
         assert r.status_code == 200
@@ -120,7 +140,7 @@ class TestAskReviewLoop:
             "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",   # review refines
             "OK",                                                    # second review approves
         ])
-        monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(pl, "chat_stream", _chat_stream_from_iter(responses))
 
         r = client.post("/api/ask", json={"question": "show brands"})
         assert r.status_code == 200
@@ -144,7 +164,7 @@ class TestAskReviewLoop:
             "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # review refines (also runs)
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # refines back to first → oscillation
         ])
-        monkeypatch.setattr(pl, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(pl, "chat_stream", _chat_stream_from_iter(responses))
 
         r = client.post("/api/ask", json={"question": "anything"})
         assert r.status_code == 200
@@ -171,7 +191,8 @@ class TestAskFailure:
         monkeypatch.setenv("MLX_MAX_RETRIES", "2")
         # Always emits something the guard rejects
         monkeypatch.setattr(
-            pl, "chat", lambda messages: "```sql\nDROP TABLE Device\n```"
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nDROP TABLE Device\n```"]),
         )
 
         r = client.post("/api/ask", json={"question": "anything"})
@@ -197,8 +218,8 @@ class TestAskSessionMemory:
         from app.llm import pipeline as pl
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            pl, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"]),
         )
         r = client.post("/api/ask", json={"question": "show one brand"})
         assert r.status_code == 200
@@ -213,11 +234,11 @@ class TestAskSessionMemory:
 
         captured = []
 
-        def capturing_chat(messages):
+        def capturing_chat_stream(messages):
             captured.append(list(messages))
-            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+            yield "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
 
-        monkeypatch.setattr(pl, "chat", capturing_chat)
+        monkeypatch.setattr(pl, "chat_stream", capturing_chat_stream)
 
         r1 = client.post("/api/ask", json={"question": "show brands"})
         sid = r1.json()["session_id"]
@@ -237,8 +258,8 @@ class TestAskSessionMemory:
         from app.llm import pipeline as pl
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            pl, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"]),
         )
         r = client.post("/api/ask", json={"question": "x", "session_id": "my-fixed-id"})
         assert r.json()["session_id"] == "my-fixed-id"
@@ -248,7 +269,8 @@ class TestAskSessionMemory:
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setenv("MLX_MAX_RETRIES", "1")
         monkeypatch.setattr(
-            pl, "chat", lambda messages: "```sql\nDROP TABLE Device\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nDROP TABLE Device\n```"]),
         )
         r = client.post("/api/ask", json={"question": "x", "session_id": "abc123"})
         assert r.status_code == 400
@@ -258,8 +280,8 @@ class TestAskSessionMemory:
         from app.llm import pipeline as pl
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            pl, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"]),
         )
         sid = "to-reset"
         client.post("/api/ask", json={"question": "x", "session_id": sid})
@@ -269,11 +291,11 @@ class TestAskSessionMemory:
 
         captured = []
 
-        def capturing_chat(messages):
+        def capturing_chat_stream(messages):
             captured.append(list(messages))
-            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+            yield "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
 
-        monkeypatch.setattr(pl, "chat", capturing_chat)
+        monkeypatch.setattr(pl, "chat_stream", capturing_chat_stream)
         client.post("/api/ask", json={"question": "y", "session_id": sid})
         # No injected "earlier question" content — only the new "y" question.
         injected = "\n".join(m["content"] for m in captured[0] if m["role"] == "user")
@@ -290,8 +312,8 @@ class TestAskStream:
         from app.llm import pipeline as pl
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            pl, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"]),
         )
 
         r = client.post("/api/ask/stream", json={"question": "show brands"})
@@ -316,11 +338,11 @@ class TestAskStream:
 
         captured = []
 
-        def capturing_chat(messages):
+        def capturing_chat_stream(messages):
             captured.append(list(messages))
-            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+            yield "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
 
-        monkeypatch.setattr(pl, "chat", capturing_chat)
+        monkeypatch.setattr(pl, "chat_stream", capturing_chat_stream)
 
         # First streaming call mints a session
         r1 = client.post("/api/ask/stream", json={"question": "first q"})
@@ -333,12 +355,48 @@ class TestAskStream:
         injected = "\n".join(m["content"] for m in captured[1] if m["role"] == "user")
         assert "first q" in injected
 
+    def test_stream_emits_phase_and_sql_token_events(self, client, monkeypatch):
+        """Token-level streaming: each chat_stream() call yields multiple
+        tokens; the streaming route surfaces each as a sql_token event,
+        bracketed by a phase event."""
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+
+        # Five tokens that, joined, form a valid SQL block.
+        sql_tokens = ["```sql\n", "SELECT brand ", "FROM Device_Name ", "LIMIT 1", "\n```"]
+
+        def chat_stream_mock(messages):
+            for tok in sql_tokens:
+                yield tok
+
+        monkeypatch.setattr(pl, "chat_stream", chat_stream_mock)
+
+        r = client.post("/api/ask/stream", json={"question": "stream me"})
+        assert r.status_code == 200
+        events = self._events(r.text)
+        types = [e["type"] for e in events]
+
+        # Order: phase → 5× sql_token → attempt → executed → result → session
+        assert types[0] == "phase"
+        assert events[0]["phase"] == "generating_sql"
+        token_events = [e for e in events if e["type"] == "sql_token"]
+        assert len(token_events) == len(sql_tokens)
+        assert "".join(e["content"] for e in token_events) == "".join(sql_tokens)
+        # Every sql_token carries its phase so the UI can route it.
+        for e in token_events:
+            assert e["phase"] == "generating_sql"
+        # The result still carries the canonicalised SQL.
+        result = next(e for e in events if e["type"] == "result")
+        assert "Device_Name" in result["sql"]
+
     def test_stream_emits_error_on_exhaustion(self, client, monkeypatch):
         from app.llm import pipeline as pl
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setenv("MLX_MAX_RETRIES", "2")
         monkeypatch.setattr(
-            pl, "chat", lambda messages: "```sql\nDROP TABLE Device\n```",
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nDROP TABLE Device\n```"]),
         )
 
         r = client.post("/api/ask/stream", json={"question": "no good"})
