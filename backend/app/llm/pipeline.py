@@ -33,6 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db import ro_engine
 from app.llm.client import (
     chat,
+    chat_stream,
     explanation_messages,
     extract_sql,
     format_result_preview,
@@ -103,6 +104,27 @@ def _explain_result(question: str, sql: str,
         return None
     preview = format_result_preview(cols, rows, max_rows=_preview_rows())
     raw = chat(explanation_messages(question, sql, preview))
+    cleaned = strip_code_fences(raw)
+    return cleaned or None
+
+
+def _explain_result_stream(question: str, sql: str,
+                           cols: list[str], rows: list[dict]):
+    """Generator-form explanation: yields phase + sql_token events and
+    returns the cleaned explanation text via StopIteration.value.
+
+    Used inside `answer_question_events` so the explanation flows
+    token-by-token. Callers consume with
+    `explanation = yield from _explain_result_stream(...)`. Returns None
+    when explanations are disabled, matching `_explain_result`.
+    """
+    if not _explain_results_enabled():
+        return None
+    preview = format_result_preview(cols, rows, max_rows=_preview_rows())
+    raw = yield from _streamed_chat(
+        explanation_messages(question, sql, preview),
+        phase="explaining",
+    )
     cleaned = strip_code_fences(raw)
     return cleaned or None
 
@@ -201,6 +223,25 @@ def _result_event(result: AskResult, kind: str = "result") -> dict:
     }
 
 
+def _streamed_chat(messages: list[dict], phase: str):
+    """Helper generator that wraps a chat call with phase + token events.
+
+    Yields `phase` first, then `sql_token` events as tokens arrive, then
+    returns the assembled text via StopIteration.value. Callers consume it
+    with `result = yield from _streamed_chat(...)`. Phases:
+      - generating_sql: initial SQL emission
+      - refining_sql:   review-triggered refinement
+      - retrying_sql:   error-recovery retry
+      - reviewing:      review judgment turn (OK / refinement)
+    """
+    yield {"type": "phase", "phase": phase}
+    tokens: list[str] = []
+    for tok in chat_stream(messages):
+        tokens.append(tok)
+        yield {"type": "sql_token", "phase": phase, "content": tok}
+    return "".join(tokens)
+
+
 def answer_question_events(question: str, *, history: list[dict] | None = None):
     """Generator-form pipeline: yields event dicts as work progresses.
 
@@ -242,7 +283,7 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
     seen_sqls: set[str] = set()
     last_success: tuple[str, list[str], list[dict], bool] | None = None
 
-    last_raw = chat(messages)
+    last_raw = yield from _streamed_chat(messages, phase="generating_sql")
 
     def _push(att: Attempt):
         attempts.append(att)
@@ -258,7 +299,7 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
             yield _push(Attempt(sql=candidate, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
-            last_raw = chat(messages)
+            last_raw = yield from _streamed_chat(messages, phase="retrying_sql")
             continue
 
         try:
@@ -268,7 +309,7 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
             yield _push(Attempt(sql=safe_sql, error=error, kind="execution"))
             messages.append({"role": "assistant", "content": last_raw})
             messages.append({"role": "user", "content": _retry_user_message(error)})
-            last_raw = chat(messages)
+            last_raw = yield from _streamed_chat(messages, phase="retrying_sql")
             continue
 
         if safe_sql in seen_sqls and last_success is not None:
@@ -277,11 +318,14 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
                 sql=safe_sql, succeeded=True, kind="review",
                 judgment="(oscillation guard) model re-emitted a previous query; accepting prior result",
             ))
+            explanation = yield from _explain_result_stream(
+                question, prev_sql, prev_cols, prev_rows,
+            )
             res = AskResult(
                 question=question,
                 sql=prev_sql, columns=prev_cols, rows=prev_rows,
                 attempts=attempts, raw_llm_response=last_raw,
-                explanation=_explain_result(question, prev_sql, prev_cols, prev_rows),
+                explanation=explanation,
                 truncated=prev_truncated,
             )
             yield _result_event(res)
@@ -299,10 +343,13 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
         }
 
         if not verify:
+            explanation = yield from _explain_result_stream(
+                question, safe_sql, cols, rows,
+            )
             res = AskResult(
                 question=question, sql=safe_sql, columns=cols, rows=rows,
                 attempts=attempts, raw_llm_response=last_raw,
-                explanation=_explain_result(question, safe_sql, cols, rows),
+                explanation=explanation,
                 truncated=truncated,
             )
             yield _result_event(res)
@@ -313,16 +360,19 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
         messages.append({"role": "user",
                          "content": review_user_message(question, safe_sql, preview)})
 
-        review_raw = chat(messages)
+        review_raw = yield from _streamed_chat(messages, phase="reviewing")
         if not has_fenced_sql(review_raw):
             yield _push(Attempt(
                 sql=safe_sql, succeeded=True, kind="review",
                 judgment=review_raw.strip()[:500],
             ))
+            explanation = yield from _explain_result_stream(
+                question, safe_sql, cols, rows,
+            )
             res = AskResult(
                 question=question, sql=safe_sql, columns=cols, rows=rows,
                 attempts=attempts, raw_llm_response=review_raw,
-                explanation=_explain_result(question, safe_sql, cols, rows),
+                explanation=explanation,
                 truncated=truncated,
             )
             yield _result_event(res)
@@ -338,10 +388,13 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
     # Exhausted attempts. Return last successful result if any.
     if last_success is not None:
         prev_sql, prev_cols, prev_rows, prev_truncated = last_success
+        explanation = yield from _explain_result_stream(
+            question, prev_sql, prev_cols, prev_rows,
+        )
         res = AskResult(
             question=question, sql=prev_sql, columns=prev_cols, rows=prev_rows,
             attempts=attempts, raw_llm_response=last_raw,
-            explanation=_explain_result(question, prev_sql, prev_cols, prev_rows),
+            explanation=explanation,
             truncated=prev_truncated,
         )
         yield _result_event(res)
