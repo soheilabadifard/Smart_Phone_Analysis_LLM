@@ -64,14 +64,40 @@ const SUGGESTIONS = [
   'Which chipset manufacturer dominates phones priced under 300 EUR?',
 ]
 
+const PHASE_LABELS = {
+  generating_sql: 'Generating SQL…',
+  retrying_sql:   'Retrying after an error…',
+  refining_sql:   'Refining SQL…',
+  reviewing:      'Reviewing result…',
+  explaining:     'Writing explanation…',
+}
+
 // Process one NDJSON event from /api/ask/stream against the partial-answer
 // state. Returns the next answer state, or null if the event isn't relevant.
 function applyEvent(prev, ev) {
   const base = prev || {
     question: '', sql: '', columns: [], rows: [], attempts: [],
     raw_llm_response: '', explanation: null, truncated: false,
+    phase: null, partialSql: '', partialExplanation: '',
   }
   switch (ev.type) {
+    case 'phase':
+      // Entering a new pipeline phase. Reset whichever streaming buffer
+      // this phase will feed so we don't show stale tokens from the
+      // previous phase mixed with the new one.
+      if (ev.phase === 'explaining') {
+        return { ...base, phase: ev.phase, partialExplanation: '' }
+      }
+      if (ev.phase === 'generating_sql' || ev.phase === 'retrying_sql' || ev.phase === 'refining_sql') {
+        return { ...base, phase: ev.phase, partialSql: '' }
+      }
+      return { ...base, phase: ev.phase }
+    case 'sql_token':
+      // Accumulate model tokens into the right buffer based on phase.
+      if (ev.phase === 'explaining') {
+        return { ...base, partialExplanation: (base.partialExplanation || '') + ev.content }
+      }
+      return { ...base, partialSql: (base.partialSql || '') + ev.content }
     case 'attempt':
       return { ...base, attempts: [...base.attempts, ev.attempt] }
     case 'executed':
@@ -83,6 +109,7 @@ function applyEvent(prev, ev) {
         columns: ev.columns,
         rows: ev.rows,
         truncated: !!ev.truncated,
+        partialSql: '',  // SQL is now finalised; clear the streaming buffer
       }
     case 'result':
       // Replace state with the final accepted answer (carries explanation).
@@ -93,6 +120,7 @@ function applyEvent(prev, ev) {
         raw_llm_response: ev.raw_llm_response,
         explanation: ev.explanation,
         truncated: !!ev.truncated,
+        phase: null, partialSql: '', partialExplanation: '',
       }
     default:
       return null
@@ -247,7 +275,9 @@ export default function AskView() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginTop: '0.6rem' }}>
           <button className="primary" type="submit" disabled={loading}>
             {loading
-              ? (streaming ? 'Streaming…' : 'Thinking…')
+              ? (answer?.phase && PHASE_LABELS[answer.phase]
+                 ? PHASE_LABELS[answer.phase]
+                 : (streaming ? 'Connecting…' : 'Thinking…'))
               : (sessionId ? 'Ask (continues conversation)' : 'Ask')}
           </button>
           {sessionId && (
@@ -277,13 +307,25 @@ export default function AskView() {
           <div className="card">
             <h3 style={{ marginTop: 0 }}>
               Generated SQL
+              {answer.phase && PHASE_LABELS[answer.phase] && (
+                <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#9bd1ff' }}>
+                  · {PHASE_LABELS[answer.phase]}
+                </span>
+              )}
               {answer.attempts && answer.attempts.length > 1 && (
                 <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#f0c674' }}>
                   · {answer.attempts.length} attempts ({summariseAttempts(answer.attempts)})
                 </span>
               )}
             </h3>
-            <pre className="sql">{answer.sql}</pre>
+            {/* Prefer the finalised `sql` once we've got it; otherwise show
+                the tokens streaming in with a blinking caret. */}
+            <pre className="sql">
+              {answer.sql || answer.partialSql || ''}
+              {!answer.sql && answer.partialSql !== undefined && answer.partialSql !== '' && (
+                <span style={{ animation: 'blink 1s step-end infinite' }}>▌</span>
+              )}
+            </pre>
             {answer.attempts && answer.attempts.length > 1 && (
               <details style={{ marginTop: '0.6rem' }}>
                 <summary style={{ cursor: 'pointer', color: '#9aa3ad' }}>
@@ -320,7 +362,7 @@ export default function AskView() {
                 </span>
               )}
             </h3>
-            {answer.explanation && (
+            {(answer.explanation || answer.partialExplanation) && (
               <div style={{
                 background: '#1d2531', border: '1px solid #2a3a4a',
                 borderLeft: '3px solid #6aa9ff', borderRadius: 4,
@@ -330,7 +372,10 @@ export default function AskView() {
                 <div style={{ color: '#9bd1ff', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>
                   LLM explanation
                 </div>
-                {answer.explanation}
+                {answer.explanation || answer.partialExplanation}
+                {!answer.explanation && answer.partialExplanation && (
+                  <span style={{ animation: 'blink 1s step-end infinite' }}>▌</span>
+                )}
               </div>
             )}
             {answer.rows.length === 0 ? (
