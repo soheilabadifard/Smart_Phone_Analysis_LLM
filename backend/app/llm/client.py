@@ -18,7 +18,10 @@ RULES:
 - Output exactly ONE SQL statement, a SELECT (or WITH ... SELECT).
 - Wrap the SQL in a ```sql fenced code block. No prose around it.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, MERGE, or REPLACE.
-- Always LIMIT results to at most 100 rows unless the user explicitly asks for more.
+- Default to `LIMIT 100`. If the user asks for "all", "every", "complete list",
+  or specifies a number, honour their intent: use `LIMIT 5000` (which is the
+  server-side cap) when they want everything, or the explicit number they
+  named. Top-N questions ("top 10 phones by …") use that N.
 - Prefer readable column aliases (AS brand, AS avg_price_eur, ...).
 - Filter NULLs out of aggregates and ORDER BY columns where they would skew results.
 - If the question is ambiguous, pick the most reasonable interpretation and proceed.
