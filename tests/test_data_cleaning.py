@@ -384,6 +384,41 @@ class TestOSExtraction:
             "EMUI", "MagicOS", "Microsoft", "Proprietary",
         ]
 
+    def test_base_os_strips_trailing_punctuation(self):
+        """`Android, Realme UI` and `Android-based, OMS` both lose their
+        trailing comma before map lookup, so they fold into 'Android'
+        instead of producing 'Android,' / 'Android-based,' duplicates."""
+        df = pd.DataFrame({"Platform_OS": [
+            "Android, Realme UI 3.0",          # bug repro: was 'Android,'
+            "Android, Funtouch 12",            # bug repro: was 'Android,'
+            "Android-based, OMS 2.5",          # bug repro: was 'Android-based,'
+            "Android-based OPhone 2.5",        # already worked, still 'Android'
+        ]})
+        proc = DataPreProcess(df)
+        proc.extract_base_os()
+        assert proc.df["base_os"].tolist() == ["Android"] * 4
+
+    def test_base_os_multiword_names_preserved(self):
+        """Multi-word OS names ('Wear OS', 'Blue OS', 'Firefox OS') are
+        recognised as a prefix so a naive first-token split doesn't truncate
+        them to 'Wear' / 'Blue' / 'Firefox'."""
+        df = pd.DataFrame({"Platform_OS": [
+            "Wear OS",                  # bug repro: was 'Wear'
+            "Blue OS 3.0",              # bug repro: was 'Blue'
+            "Blue OS",                  # bug repro: was 'Blue'
+            "Firefox OS 1.3",           # bug repro: was 'Firefox'
+            "Firefox OS",               # bug repro: was 'Firefox'
+            "Firefox 2.0",              # short form: 'Firefox' → 'Firefox OS' via map
+            "Firefox 2.0, upgradable to 2.1",  # short form, comma after token
+        ]})
+        proc = DataPreProcess(df)
+        proc.extract_base_os()
+        assert proc.df["base_os"].tolist() == [
+            "Wear OS", "Blue OS", "Blue OS",
+            "Firefox OS", "Firefox OS",
+            "Firefox OS", "Firefox OS",
+        ]
+
     def test_version_extraction(self):
         df = pd.DataFrame({"Platform_OS": ["Android 14, One UI 6.1", "iOS 17"]})
         proc = DataPreProcess(df)
