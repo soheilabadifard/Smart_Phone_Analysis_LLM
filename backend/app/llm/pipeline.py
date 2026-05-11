@@ -226,6 +226,16 @@ def _result_event(result: AskResult, kind: str = "result") -> dict:
 _FENCE_BREAK_PHASES = frozenset({
     "generating_sql", "retrying_sql", "refining_sql", "reviewing",
 })
+# Stop sequences passed to MLX for SQL-emitting phases so the *server*
+# halts generation right after the closing fence. Without this the model
+# can stall mid-generation after a valid SQL block (no EOS, no more
+# tokens), leaving chat_stream blocked on a network read forever — a
+# Python-side break can't fire if the SDK never yields another chunk.
+_SQL_STOP_SEQUENCES = ["\n```\n", "\n```"]
+# Bounded budget for SQL phases. Most fenced SELECT statements fit in
+# under 300 tokens; we never want to wait 800 of dead generation.
+_SQL_MAX_TOKENS = 400
+_EXPLAIN_MAX_TOKENS = 600
 
 
 def _streamed_chat(messages: list[dict], phase: str):
@@ -233,34 +243,41 @@ def _streamed_chat(messages: list[dict], phase: str):
 
     Yields `phase` first, then `sql_token` events as tokens arrive, then
     returns the assembled text via StopIteration.value. Callers consume it
-    with `result = yield from _streamed_chat(...)`. Phases:
-      - generating_sql: initial SQL emission
-      - refining_sql:   review-triggered refinement
-      - retrying_sql:   error-recovery retry
-      - reviewing:      review judgment turn (OK / refinement)
-      - explaining:     final natural-language explanation (no fence)
+    with `result = yield from _streamed_chat(...)`.
 
-    Early-break: for SQL-emitting phases we stop iterating the model as soon
-    as we've seen the closing fence (two `` ``` `` sequences in the joined
-    output). Some models — observed for the year-over-year RAM question —
-    keep generating commentary after a valid fenced SQL block, which would
-    otherwise force the pipeline to wait up to `max_tokens=800` of dead
-    output before moving on to execution. Explanation phase doesn't apply
-    (no fence) so it runs to its natural end.
+    SQL-emitting phases (`generating_sql`, `retrying_sql`, `refining_sql`,
+    `reviewing`) pass `stop=["\\n```\\n", "\\n```"]` so MLX itself halts
+    generation right after the closing fence. The OpenAI spec strips the
+    stop sequence from the returned content, so we synthesise the closing
+    fence on the joined output. A Python-side count('```')>=2 check is
+    kept as a belt-and-suspenders backup for models that emit the closing
+    fence and *then* keep going before hitting stop.
     """
     yield {"type": "phase", "phase": phase}
     tokens: list[str] = []
     fence_break_enabled = phase in _FENCE_BREAK_PHASES
-    for tok in chat_stream(messages):
+    if fence_break_enabled:
+        stop = _SQL_STOP_SEQUENCES
+        max_tokens = _SQL_MAX_TOKENS
+    else:
+        stop = None
+        max_tokens = _EXPLAIN_MAX_TOKENS
+    for tok in chat_stream(messages, stop=stop, max_tokens=max_tokens):
         tokens.append(tok)
         yield {"type": "sql_token", "phase": phase, "content": tok}
-        # The joined string is what the regex sees, so counting on it is
-        # tokenisation-agnostic: `` ``` `` could arrive as one chunk or as
-        # three single-backtick chunks — either way the count rises by 1
-        # per complete fence boundary.
         if fence_break_enabled and "".join(tokens).count("```") >= 2:
             break
-    return "".join(tokens)
+    joined = "".join(tokens)
+    # If the server fired on a stop sequence, the closing ``` isn't in the
+    # output. Synthesise it so downstream `extract_sql` and the frontend's
+    # `extractSqlFromPartial` both see a complete fenced block.
+    if fence_break_enabled and joined.count("```") == 1:
+        joined = joined.rstrip() + "\n```"
+        # Also push the synthesised fence through as a final token so the
+        # frontend's partialSql buffer ends with a closing fence.
+        yield {"type": "sql_token", "phase": phase, "content": "\n```"}
+        tokens.append("\n```")
+    return joined
 
 
 def answer_question_events(question: str, *, history: list[dict] | None = None):
