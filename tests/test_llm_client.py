@@ -15,6 +15,24 @@ from app.llm.client import extract_sql, has_fenced_sql, initial_messages
 from app.llm.few_shot import EXAMPLES
 
 
+def _stream(responses):
+    """chat_stream-shaped mock: each invocation consumes the next entry
+    from `responses` and yields it as a single token."""
+    it = responses if hasattr(responses, "__next__") else iter(responses)
+
+    def _impl(messages):
+        yield next(it)
+
+    return _impl
+
+
+def _stream_single(text):
+    """One-shot chat_stream mock that always yields the same text."""
+    def _impl(messages):
+        yield text
+    return _impl
+
+
 # ---------------------------------------------------------------------------
 # extract_sql
 # ---------------------------------------------------------------------------
@@ -123,8 +141,8 @@ class TestPipelineRetry:
     def test_first_try_success(self, monkeypatch):
         monkeypatch.setattr(
             llm_pipeline,
-            "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name\n```",
+            "chat_stream",
+            _stream_single("```sql\nSELECT brand FROM Device_Name\n```"),
         )
         result = llm_pipeline.answer_question("list brands")
         assert len(result.attempts) == 1
@@ -136,7 +154,7 @@ class TestPipelineRetry:
             "```sql\nDROP TABLE Device\n```",                       # rejected by guard
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",   # ok
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("show one brand")
         assert len(result.attempts) == 2
@@ -150,7 +168,7 @@ class TestPipelineRetry:
             "```sql\nSELECT no_such_column FROM Device_Name\n```",  # SQL error
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",   # ok
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("show one brand")
         assert len(result.attempts) == 2
@@ -163,8 +181,8 @@ class TestPipelineRetry:
         # Always emits unsafe SQL — guard always rejects
         monkeypatch.setattr(
             llm_pipeline,
-            "chat",
-            lambda messages: "```sql\nDROP TABLE Device\n```",
+            "chat_stream",
+            _stream_single("```sql\nDROP TABLE Device\n```"),
         )
 
         result = llm_pipeline.answer_question("evil intent")
@@ -176,8 +194,8 @@ class TestPipelineRetry:
         monkeypatch.setenv("MLX_MAX_RETRIES", "0")
         monkeypatch.setattr(
             llm_pipeline,
-            "chat",
-            lambda messages: "```sql\nSELECT 1 AS one\n```",
+            "chat_stream",
+            _stream_single("```sql\nSELECT 1 AS one\n```"),
         )
 
         result = llm_pipeline.answer_question("one")
@@ -188,15 +206,16 @@ class TestPipelineRetry:
         """The LLM should see the failed-attempt context on the second call."""
         captured = []
 
-        def capturing_chat(messages):
+        def capturing_chat_stream(messages):
             # Snapshot via list() — pipeline mutates `messages` after this
             # call returns, and we want to assert what *this* call saw.
             captured.append(list(messages))
             if len(captured) == 1:
-                return "```sql\nDROP TABLE Device\n```"
-            return "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
+                yield "```sql\nDROP TABLE Device\n```"
+                return
+            yield "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"
 
-        monkeypatch.setattr(llm_pipeline, "chat", capturing_chat)
+        monkeypatch.setattr(llm_pipeline, "chat_stream", capturing_chat_stream)
         llm_pipeline.answer_question("retry me")
 
         # First call: just system + few-shot + user question
@@ -223,7 +242,7 @@ class TestPipelineReview:
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
             "OK",
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("show a brand")
         assert len(result.attempts) == 2
@@ -239,7 +258,7 @@ class TestPipelineReview:
             "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",  # refinement
             "OK",
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("show brands")
         # exec1 succeeded, review-refine, exec2 succeeded, review-approve = 4
@@ -256,7 +275,7 @@ class TestPipelineReview:
             "```sql\nSELECT model FROM Device_Name LIMIT 1\n```",  # review refines → exec2
             "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",  # refines back → oscillation
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("anything")
         # Last attempt is the oscillation-guard review entry.
@@ -270,8 +289,8 @@ class TestPipelineReview:
     def test_verify_off_skips_review(self, monkeypatch):
         monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
         monkeypatch.setattr(
-            llm_pipeline, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            llm_pipeline, "chat_stream",
+            _stream_single("```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"),
         )
         result = llm_pipeline.answer_question("brands")
         assert len(result.attempts) == 1
@@ -293,7 +312,7 @@ class TestPipelineExplanation:
             "```sql\nSELECT brand FROM Device_Name LIMIT 2\n```",
             "Two brands are listed: Apple and Samsung.",
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("show brands")
         assert result.explanation == "Two brands are listed: Apple and Samsung."
@@ -301,8 +320,8 @@ class TestPipelineExplanation:
     def test_explain_off_returns_none(self, monkeypatch):
         monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
         monkeypatch.setattr(
-            llm_pipeline, "chat",
-            lambda messages: "```sql\nSELECT brand FROM Device_Name LIMIT 1\n```",
+            llm_pipeline, "chat_stream",
+            _stream_single("```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"),
         )
         result = llm_pipeline.answer_question("brands")
         assert result.explanation is None
@@ -313,7 +332,7 @@ class TestPipelineExplanation:
             "```sql\nSELECT 1\n```",
             "The result is 1. ```sql\nSELECT 1\n``` Just one row.",
         ])
-        monkeypatch.setattr(llm_pipeline, "chat", lambda messages: next(responses))
+        monkeypatch.setattr(llm_pipeline, "chat_stream", _stream(responses))
 
         result = llm_pipeline.answer_question("just one")
         assert "```" not in (result.explanation or "")
