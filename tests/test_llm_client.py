@@ -123,6 +123,29 @@ class TestInitialMessages:
                    "TRUNCATE", "CREATE", "MERGE", "REPLACE", "SELECT"):
             assert kw in sys_content, f"system prompt missing keyword {kw!r}"
 
+    def test_system_prompt_documents_all_escalation(self):
+        """Pin the loosened LIMIT rule: the prompt must teach the model that
+        'all' / 'every' overrides the default LIMIT 100 with LIMIT 5000
+        (the server-side row cap)."""
+        sys_content = initial_messages("x")[0]["content"]
+        assert "LIMIT 100" in sys_content, "default LIMIT missing"
+        assert "all" in sys_content.lower(), "all-escalation rule missing"
+        assert "5000" in sys_content, "server cap not documented in prompt"
+
+    def test_few_shot_has_no_limit_example(self):
+        """A few-shot example must teach the LIMIT-5000 'all' pattern;
+        otherwise the model keeps copying LIMIT 100 from the other examples."""
+        from app.llm.few_shot import EXAMPLES
+        questions = [q.lower() for q, _ in EXAMPLES]
+        assert any("all " in q or q.startswith("all ") for q in questions), (
+            "few_shot.py is missing an 'all phones' example"
+        )
+        # The matching assistant answer must use LIMIT 5000, not LIMIT 100.
+        all_examples = [(q, a) for q, a in EXAMPLES if "all " in q.lower()]
+        assert all_examples
+        for q, a in all_examples:
+            assert "LIMIT 5000" in a, f"all-question example {q!r} doesn't use LIMIT 5000"
+
 
 # ---------------------------------------------------------------------------
 # _coerce_for_json: regression for the ROUND(AVG(...)) hang
