@@ -72,6 +72,78 @@ const PHASE_LABELS = {
   explaining:     'Writing explanation…',
 }
 
+// The four canonical pipeline stages we show in the progress strip. The
+// "executing" stage isn't a phase event — it's the gap between the
+// `executed` event and the next `phase` event (reviewing or result), so
+// we synthesise it.
+const PIPELINE_STAGES = [
+  { key: 'generating', label: 'Generating SQL', match: ['generating_sql', 'retrying_sql', 'refining_sql'] },
+  { key: 'executing',  label: 'Executing SQL', match: ['__executing__'] },
+  { key: 'reviewing',  label: 'Reviewing',     match: ['reviewing'] },
+  { key: 'explaining', label: 'Explaining',    match: ['explaining'] },
+]
+
+function stageIndexFor(phase) {
+  return PIPELINE_STAGES.findIndex((s) => s.match.includes(phase))
+}
+
+function PipelineProgress({ answer, finalised }) {
+  // Resolve the active phase:
+  //   - finalised → no active stage (everything below renders as done)
+  //   - answer has a phase → that one
+  //   - mid-fetch but no events yet → assume 'generating_sql' so the strip
+  //     doesn't appear inert in the first second after submission.
+  let phase
+  if (finalised) phase = null
+  else if (answer?.phase) phase = answer.phase
+  else phase = 'generating_sql'
+  const activeIdx = phase ? stageIndexFor(phase) : -1
+  return (
+    <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 0.9rem' }}>
+      {PIPELINE_STAGES.map((stage, i) => {
+        let status
+        if (finalised) {
+          status = 'done'
+        } else if (activeIdx === -1) {
+          status = 'pending'
+        } else if (i < activeIdx) {
+          status = 'done'
+        } else if (i === activeIdx) {
+          status = 'active'
+        } else {
+          status = 'pending'
+        }
+        const color = status === 'done' ? '#62c699'
+                    : status === 'active' ? '#9bd1ff' : '#5a6168'
+        const bg = status === 'active' ? '#1d2531' : 'transparent'
+        const icon = status === 'done' ? '✓' : status === 'active' ? '⟳' : '·'
+        return (
+          <span key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <span
+              data-testid={`pipeline-stage-${stage.key}`}
+              data-status={status}
+              style={{
+                color, background: bg, fontSize: '0.85rem',
+                padding: '0.25rem 0.6rem', borderRadius: 999,
+                border: `1px solid ${status === 'active' ? '#2a3a4a' : 'transparent'}`,
+              }}
+            >
+              <span style={{
+                display: 'inline-block', marginRight: '0.35rem',
+                animation: status === 'active' ? 'blink 1s step-end infinite' : 'none',
+              }}>{icon}</span>
+              {stage.label}
+            </span>
+            {i < PIPELINE_STAGES.length - 1 && (
+              <span style={{ color: '#3a3f47', fontSize: '0.75rem' }}>›</span>
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 // Process one NDJSON event from /api/ask/stream against the partial-answer
 // state. Returns the next answer state, or null if the event isn't relevant.
 function applyEvent(prev, ev) {
@@ -102,7 +174,9 @@ function applyEvent(prev, ev) {
       return { ...base, attempts: [...base.attempts, ev.attempt] }
     case 'executed':
       // Render rows immediately so the user sees the result before the
-      // review/explanation turns finish.
+      // review/explanation turns finish. Set a synthetic phase so the
+      // pipeline-progress strip advances past 'Generating SQL' into
+      // 'Executing SQL' until the next real phase event arrives.
       return {
         ...base,
         sql: ev.sql,
@@ -110,6 +184,7 @@ function applyEvent(prev, ev) {
         rows: ev.rows,
         truncated: !!ev.truncated,
         partialSql: '',  // SQL is now finalised; clear the streaming buffer
+        phase: '__executing__',
       }
     case 'result':
       // Replace state with the final accepted answer (carries explanation).
@@ -302,12 +377,16 @@ export default function AskView() {
 
       {error && <ErrorPanel error={error} />}
 
+      {(loading || answer) && (
+        <PipelineProgress answer={answer} finalised={!loading && !!answer} />
+      )}
+
       {answer && (
         <>
           <div className="card">
             <h3 style={{ marginTop: 0 }}>
               Generated SQL
-              {answer.phase && PHASE_LABELS[answer.phase] && (
+              {loading && answer.phase && PHASE_LABELS[answer.phase] && (
                 <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#9bd1ff' }}>
                   · {PHASE_LABELS[answer.phase]}
                 </span>
