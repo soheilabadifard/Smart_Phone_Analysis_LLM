@@ -14,6 +14,8 @@ session. Memory is process-local — a server restart resets it.
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import json
 from typing import Any
 
@@ -24,6 +26,21 @@ from pydantic import BaseModel
 from app.llm.client import format_result_preview
 from app.llm.pipeline import answer_question, answer_question_events
 from app.routes import session_store
+
+
+def _json_default(obj):
+    """Fallback for json.dumps on values that the streaming route emits but
+    aren't natively serialisable. pipeline._execute already coerces these on
+    row construction; this is defence-in-depth for anything that slips
+    through (or future schema changes that introduce new column types).
+    A silent TypeError here closes the stream and the UI hangs — see the
+    Decimal-from-ROUND(AVG(...)) regression that prompted this guard.
+    """
+    if isinstance(obj, decimal.Decimal):
+        return float(obj)
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 router = APIRouter()
 
@@ -121,8 +138,8 @@ def _stream_events(question: str, sid: str):
                 sid, question,
                 ev.get("sql", ""), ev.get("columns", []), ev.get("rows", []),
             )
-        yield json.dumps(ev) + "\n"
-    yield json.dumps({"type": "session", "session_id": sid}) + "\n"
+        yield json.dumps(ev, default=_json_default) + "\n"
+    yield json.dumps({"type": "session", "session_id": sid}, default=_json_default) + "\n"
 
 
 @router.post("/stream")
