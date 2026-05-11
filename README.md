@@ -14,7 +14,7 @@ interface driven by a locally hosted large language model.
 | **Backend** | FastAPI, 35 REST endpoints (Recommend / Analytics / Ask) |
 | **Frontend** | React + Vite + Plotly, 5 tabs (Recommend, Phone / Watch / Tablet Analytics, Ask) |
 | **NL→SQL** | Local MLX server (Qwen2.5-Coder-32B-Instruct-bf16) with `sqlglot` SELECT-only guard, bounded self-correction, result review, conversation memory, and token-level NDJSON streaming |
-| **Tests** | 455 backend (`pytest`) + 35 frontend (`vitest`) — both run in CI on every push |
+| **Tests** | 455 backend (`pytest`) + 36 frontend (`vitest`) — both run in CI on every push |
 
 The original course proposal and ER diagram are in
 [`Project_Proposal.pdf`](Project_Proposal.pdf). The full final report
@@ -137,7 +137,7 @@ pytest -k oscillation                  # by name
 
 # Frontend (from frontend/)
 npm install
-npm test                               # 35 cases
+npm test                               # 36 cases
 npm run test:watch
 ```
 
