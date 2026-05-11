@@ -170,21 +170,29 @@ def chat(messages: list[dict]) -> str:
     return resp.choices[0].message.content or ""
 
 
-def chat_stream(messages: list[dict]):
+def chat_stream(messages: list[dict],
+                stop: list[str] | None = None,
+                max_tokens: int = 800):
     """Token-streaming variant of `chat()`. Yields the assistant's delta
     content as it arrives so the streaming Ask route can emit token events.
 
-    Returns a generator; callers should `''.join(...)` the yielded tokens
-    when they need the full text. The OpenAI SDK's `stream=True` mode wraps
-    the SSE stream and yields chunks whose `.choices[0].delta.content` is
-    either a token string or None on the terminating chunk.
+    `stop` is a list of stop sequences passed straight to the API. The
+    server stops generation as soon as one of them matches, which is the
+    only reliable way to break out — a Python-side break can only fire on
+    the next yielded chunk, and the model may stall mid-generation without
+    yielding anything. Per the OpenAI spec, the stop sequence itself is NOT
+    included in the returned content; callers that need the stop string
+    must synthesise it themselves.
+
+    `max_tokens` caps the worst case when neither stop nor EOS fires.
     """
     stream = _client().chat.completions.create(
         model=os.getenv("MLX_MODEL", "mlx-community/Qwen2.5-Coder-32B-Instruct-bf16"),
         messages=messages,
         temperature=0.1,
-        max_tokens=800,
+        max_tokens=max_tokens,
         stream=True,
+        stop=stop,
     )
     for chunk in stream:
         if not chunk.choices:
