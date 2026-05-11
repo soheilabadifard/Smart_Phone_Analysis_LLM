@@ -223,6 +223,11 @@ def _result_event(result: AskResult, kind: str = "result") -> dict:
     }
 
 
+_FENCE_BREAK_PHASES = frozenset({
+    "generating_sql", "retrying_sql", "refining_sql", "reviewing",
+})
+
+
 def _streamed_chat(messages: list[dict], phase: str):
     """Helper generator that wraps a chat call with phase + token events.
 
@@ -233,12 +238,28 @@ def _streamed_chat(messages: list[dict], phase: str):
       - refining_sql:   review-triggered refinement
       - retrying_sql:   error-recovery retry
       - reviewing:      review judgment turn (OK / refinement)
+      - explaining:     final natural-language explanation (no fence)
+
+    Early-break: for SQL-emitting phases we stop iterating the model as soon
+    as we've seen the closing fence (two `` ``` `` sequences in the joined
+    output). Some models — observed for the year-over-year RAM question —
+    keep generating commentary after a valid fenced SQL block, which would
+    otherwise force the pipeline to wait up to `max_tokens=800` of dead
+    output before moving on to execution. Explanation phase doesn't apply
+    (no fence) so it runs to its natural end.
     """
     yield {"type": "phase", "phase": phase}
     tokens: list[str] = []
+    fence_break_enabled = phase in _FENCE_BREAK_PHASES
     for tok in chat_stream(messages):
         tokens.append(tok)
         yield {"type": "sql_token", "phase": phase, "content": tok}
+        # The joined string is what the regex sees, so counting on it is
+        # tokenisation-agnostic: `` ``` `` could arrive as one chunk or as
+        # three single-backtick chunks — either way the count rises by 1
+        # per complete fence boundary.
+        if fence_break_enabled and "".join(tokens).count("```") >= 2:
+            break
     return "".join(tokens)
 
 
