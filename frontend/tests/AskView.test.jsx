@@ -164,6 +164,46 @@ describe('AskView', () => {
     })
   })
 
+  it('advances the pipeline progress strip through all four stages', async () => {
+    // Stream covers all four stages: generating_sql → executed (synthetic
+    // executing) → reviewing → explaining → result. At the end every stage
+    // should be marked done.
+    const enc = new TextEncoder()
+    const events = [
+      { type: 'phase', phase: 'generating_sql' },
+      { type: 'sql_token', phase: 'generating_sql', content: '```sql\nSELECT 1\n```' },
+      { type: 'attempt', index: 0, attempt: { sql: 'SELECT 1', error: null, succeeded: true, kind: 'execution', judgment: null } },
+      { type: 'executed', sql: 'SELECT 1', columns: ['one'], rows: [{ one: 1 }], truncated: false },
+      { type: 'phase', phase: 'reviewing' },
+      { type: 'sql_token', phase: 'reviewing', content: 'OK' },
+      { type: 'attempt', index: 1, attempt: { sql: 'SELECT 1', succeeded: true, kind: 'review', judgment: 'OK' } },
+      { type: 'phase', phase: 'explaining' },
+      { type: 'sql_token', phase: 'explaining', content: 'The answer is one.' },
+      { type: 'result', question: 'q', sql: 'SELECT 1', columns: ['one'], rows: [{ one: 1 }], attempts: [], raw_llm_response: '', explanation: 'The answer is one.', truncated: false },
+      { type: 'session', session_id: 'sid-x' },
+    ]
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const ev of events) controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'))
+        controller.close()
+      },
+    })
+    global.fetch = vi.fn(async () => ({ ok: true, status: 200, body: stream }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    // After all events resolve, every pipeline stage pill should be 'done'.
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-stage-generating')).toHaveAttribute('data-status', 'done')
+    })
+    expect(screen.getByTestId('pipeline-stage-executing')).toHaveAttribute('data-status', 'done')
+    expect(screen.getByTestId('pipeline-stage-reviewing')).toHaveAttribute('data-status', 'done')
+    expect(screen.getByTestId('pipeline-stage-explaining')).toHaveAttribute('data-status', 'done')
+  })
+
   it('renders SQL tokens incrementally and shows the phase label', async () => {
     const enc = new TextEncoder()
     // Each chunk is one NDJSON event. We split the SQL across multiple
