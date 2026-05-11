@@ -24,6 +24,8 @@ is consumed directly by the next iteration. So chat() is called once
 per round — never redundantly at the top of the loop.
 """
 
+import datetime
+import decimal
 import os
 import sys
 import time
@@ -148,6 +150,23 @@ def _retry_user_message(error: str) -> str:
     )
 
 
+def _coerce_for_json(value):
+    """Convert DB-returned values to types `json.dumps` can serialise.
+
+    MariaDB returns DECIMAL for AVG/ROUND/SUM-of-FLOAT — these aren't JSON
+    serialisable by default and crash the streaming route's `json.dumps`
+    silently (Starlette closes the connection on the unhandled TypeError).
+    DATE/DATETIME/TIME are also handled defensively even though the current
+    schema doesn't use them, so a future schema change doesn't reintroduce
+    the same class of bug.
+    """
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    return value
+
+
 def _row_cap() -> int:
     try:
         return max(1, int(os.getenv("ASK_MAX_ROWS", "500")))
@@ -187,7 +206,9 @@ def _execute(sql: str) -> tuple[list[str], list[dict], bool]:
         result = conn.execute(text(sql))
         cols = list(result.keys())
         # Read up to cap+1 rows so we can detect truncation without
-        # materialising the entire result set.
+        # materialising the entire result set. Each row is coerced through
+        # _coerce_for_json so Decimal / date / datetime values produced by
+        # aggregates like ROUND(AVG(...), 2) become JSON-serialisable.
         mapping_iter = result.mappings()
         rows: list[dict] = []
         truncated = False
@@ -195,7 +216,7 @@ def _execute(sql: str) -> tuple[list[str], list[dict], bool]:
             if i >= cap:
                 truncated = True
                 break
-            rows.append(dict(r))
+            rows.append({k: _coerce_for_json(v) for k, v in r.items()})
     return cols, rows, truncated
 
 
