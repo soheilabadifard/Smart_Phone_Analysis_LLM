@@ -10,6 +10,7 @@ Pick examples that cover patterns the model commonly gets wrong:
 3. GROUP BY + HAVING aggregate
 4. Year-over-year trend
 5. Top-N per group (window function)
+6. "All" / "every" — user asked for the complete list, override LIMIT
 """
 
 EXAMPLES: list[tuple[str, str]] = [
@@ -121,6 +122,20 @@ FROM per_year
 WHERE rn = 1
 ORDER BY year ASC
 LIMIT 100;
+```""",
+    ),
+    (
+        "List all phones from Nokia.",
+        """```sql
+-- "all" → use the server-side cap (LIMIT 5000), not the default LIMIT 100.
+SELECT
+    dn.brand, dn.model, d.year, d.price_eur
+FROM Device d
+JOIN Device_Name dn ON dn.id = d.device_name_id
+WHERE dn.brand = 'Nokia'
+  AND d.form_factor = 'phone'
+ORDER BY d.year DESC, dn.model ASC
+LIMIT 5000;
 ```""",
     ),
 ]
