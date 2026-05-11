@@ -355,6 +355,32 @@ class TestAskStream:
         injected = "\n".join(m["content"] for m in captured[1] if m["role"] == "user")
         assert "first q" in injected
 
+    def test_stream_emits_executing_sql_between_generating_and_executed(self, client, monkeypatch):
+        """The UI relies on this phase event to clear the streaming SQL
+        caret and advance the progress strip past 'Generating SQL' the
+        moment the model is done — not when the DB call returns.
+        """
+        from app.llm import pipeline as pl
+        monkeypatch.setenv("MLX_VERIFY_RESULTS", "false")
+        monkeypatch.setenv("MLX_EXPLAIN_RESULTS", "false")
+        monkeypatch.setattr(
+            pl, "chat_stream",
+            lambda messages: iter(["```sql\nSELECT brand FROM Device_Name LIMIT 1\n```"]),
+        )
+        r = client.post("/api/ask/stream", json={"question": "x"})
+        assert r.status_code == 200
+        events = self._events(r.text)
+        types = [e["type"] for e in events]
+        # Ordering contract: phase=generating_sql → sql_token(s) →
+        # phase=executing_sql → attempt → executed → result → session.
+        gen_idx = types.index("phase")  # first phase event
+        assert events[gen_idx]["phase"] == "generating_sql"
+        exec_idx = next(
+            i for i, e in enumerate(events) if e["type"] == "phase" and e["phase"] == "executing_sql"
+        )
+        executed_idx = types.index("executed")
+        assert gen_idx < exec_idx < executed_idx
+
     def test_stream_breaks_after_closing_fence(self, client, monkeypatch):
         """Repro for the year-over-year RAM hang: the model emits a complete
         fenced SQL block then keeps generating commentary. The pipeline must
