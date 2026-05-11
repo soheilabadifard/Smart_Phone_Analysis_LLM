@@ -169,9 +169,9 @@ def _coerce_for_json(value):
 
 def _row_cap() -> int:
     try:
-        return max(1, int(os.getenv("ASK_MAX_ROWS", "500")))
+        return max(1, int(os.getenv("ASK_MAX_ROWS", "5000")))
     except ValueError:
-        return 500
+        return 5000
 
 
 def _statement_timeout_seconds() -> int:
