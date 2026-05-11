@@ -323,6 +323,12 @@ def answer_question_events(question: str, *, history: list[dict] | None = None):
             last_raw = yield from _streamed_chat(messages, phase="retrying_sql")
             continue
 
+        # SQL is parsed and guarded; advance the UI to 'Executing SQL' before
+        # we actually run it so the caret on the partial-SQL buffer clears
+        # immediately, even if the DB call (or the in-Python row read) takes
+        # any time. Without this event the user stays on 'Generating SQL'
+        # for as long as _execute runs.
+        yield {"type": "phase", "phase": "executing_sql"}
         try:
             cols, rows, truncated = _execute(safe_sql)
         except SQLAlchemyError as e:
