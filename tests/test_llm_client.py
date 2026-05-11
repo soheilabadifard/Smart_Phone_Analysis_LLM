@@ -17,10 +17,12 @@ from app.llm.few_shot import EXAMPLES
 
 def _stream(responses):
     """chat_stream-shaped mock: each invocation consumes the next entry
-    from `responses` and yields it as a single token."""
+    from `responses` and yields it as a single token. Accepts the new
+    `stop` + `max_tokens` kwargs the pipeline now passes (and ignores them).
+    """
     it = responses if hasattr(responses, "__next__") else iter(responses)
 
-    def _impl(messages):
+    def _impl(messages, stop=None, max_tokens=None):
         yield next(it)
 
     return _impl
@@ -28,7 +30,7 @@ def _stream(responses):
 
 def _stream_single(text):
     """One-shot chat_stream mock that always yields the same text."""
-    def _impl(messages):
+    def _impl(messages, stop=None, max_tokens=None):
         yield text
     return _impl
 
@@ -206,7 +208,7 @@ class TestPipelineRetry:
         """The LLM should see the failed-attempt context on the second call."""
         captured = []
 
-        def capturing_chat_stream(messages):
+        def capturing_chat_stream(messages, stop=None, max_tokens=None):
             # Snapshot via list() — pipeline mutates `messages` after this
             # call returns, and we want to assert what *this* call saw.
             captured.append(list(messages))
