@@ -164,6 +164,40 @@ describe('AskView', () => {
     })
   })
 
+  it('renders SQL tokens incrementally and shows the phase label', async () => {
+    const enc = new TextEncoder()
+    // Each chunk is one NDJSON event. We split the SQL across multiple
+    // sql_token events to assert the partial-SQL render works.
+    const events = [
+      { type: 'phase', phase: 'generating_sql' },
+      { type: 'sql_token', phase: 'generating_sql', content: '```sql\n' },
+      { type: 'sql_token', phase: 'generating_sql', content: 'SELECT brand ' },
+      { type: 'sql_token', phase: 'generating_sql', content: 'FROM Device_Name' },
+      { type: 'sql_token', phase: 'generating_sql', content: '\n```' },
+      { type: 'attempt', index: 0, attempt: { sql: 'SELECT brand FROM Device_Name', error: null, succeeded: true, kind: 'execution', judgment: null } },
+      { type: 'executed', sql: 'SELECT brand FROM Device_Name', columns: ['brand'], rows: [{ brand: 'Apple' }], truncated: false },
+      { type: 'result', question: 'q', sql: 'SELECT brand FROM Device_Name', columns: ['brand'], rows: [{ brand: 'Apple' }], attempts: [], raw_llm_response: '', explanation: null, truncated: false },
+      { type: 'session', session_id: 'sid-1' },
+    ]
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const ev of events) controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'))
+        controller.close()
+      },
+    })
+    global.fetch = vi.fn(async () => ({ ok: true, status: 200, body: stream }))
+
+    const user = userEvent.setup()
+    render(<AskView />)
+    await user.type(screen.getByPlaceholderText(/Xiaomi/i), 'q')
+    await user.click(screen.getByRole('button', { name: /^ask$/i }))
+
+    // After everything resolves, the result table is rendered (and the
+    // partial SQL has been replaced by the finalised SQL).
+    await waitFor(() => screen.getByText('Apple'))
+    expect(screen.getByText(/SELECT brand FROM Device_Name/i)).toBeInTheDocument()
+  })
+
   it('consumes an NDJSON stream from /api/ask/stream and renders incrementally', async () => {
     // Mock the streaming response: the body is a ReadableStream that yields
     // attempt → executed → result → session events as separate chunks.
