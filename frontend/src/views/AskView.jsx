@@ -73,15 +73,30 @@ const PHASE_LABELS = {
 }
 
 // The four canonical pipeline stages we show in the progress strip. The
-// "executing" stage isn't a phase event — it's the gap between the
-// `executed` event and the next `phase` event (reviewing or result), so
-// we synthesise it.
+// 'executing' stage matches `executing_sql` (emitted by the backend right
+// after _streamed_chat returns) and `__executing__` (synthesised on the
+// frontend from the `executed` event as a no-event-gap fallback).
 const PIPELINE_STAGES = [
   { key: 'generating', label: 'Generating SQL', match: ['generating_sql', 'retrying_sql', 'refining_sql'] },
-  { key: 'executing',  label: 'Executing SQL', match: ['__executing__'] },
+  { key: 'executing',  label: 'Executing SQL', match: ['executing_sql', '__executing__'] },
   { key: 'reviewing',  label: 'Reviewing',     match: ['reviewing'] },
   { key: 'explaining', label: 'Explaining',    match: ['explaining'] },
 ]
+
+const SQL_GENERATING_PHASES = new Set(['generating_sql', 'retrying_sql', 'refining_sql'])
+
+// Pull the SQL out of a fenced ```sql … ``` block. Falls back to the raw
+// text (stripped) so a partially-arrived block still resolves to something
+// useful when the phase advances mid-emit.
+function extractSqlFromPartial(partial) {
+  if (!partial) return ''
+  const m = partial.match(/```(?:sql)?\s*([\s\S]*?)```/i)
+  if (m) return m[1].trim()
+  // Open fence without close — strip the opening fence prefix if present
+  const openOnly = partial.match(/```(?:sql)?\s*([\s\S]*)$/i)
+  if (openOnly) return openOnly[1].trim()
+  return partial.trim()
+}
 
 function stageIndexFor(phase) {
   return PIPELINE_STAGES.findIndex((s) => s.match.includes(phase))
@@ -153,17 +168,32 @@ function applyEvent(prev, ev) {
     phase: null, partialSql: '', partialExplanation: '',
   }
   switch (ev.type) {
-    case 'phase':
-      // Entering a new pipeline phase. Reset whichever streaming buffer
-      // this phase will feed so we don't show stale tokens from the
-      // previous phase mixed with the new one.
+    case 'phase': {
+      // Entering a new pipeline phase. Two transitions need special care:
+      //   - From an SQL-streaming phase into anything else (typically
+      //     `executing_sql`): the partial buffer holds the full ```sql…```
+      //     block, so we lift it into `answer.sql` here. This is what makes
+      //     the caret disappear the moment generation ends, even if the
+      //     downstream DB call hasn't fired yet.
+      //   - Into an SQL-streaming phase: reset both buffers so old tokens
+      //     don't bleed into a fresh attempt.
+      const wasGenerating = SQL_GENERATING_PHASES.has(base.phase)
+      const goingToGenerate = SQL_GENERATING_PHASES.has(ev.phase)
+      let next = { ...base, phase: ev.phase }
+      if (wasGenerating && !goingToGenerate) {
+        const finalised = extractSqlFromPartial(base.partialSql)
+        if (finalised) next.sql = finalised
+        next.partialSql = ''
+      }
+      if (goingToGenerate) {
+        next.partialSql = ''
+        next.sql = ''
+      }
       if (ev.phase === 'explaining') {
-        return { ...base, phase: ev.phase, partialExplanation: '' }
+        next.partialExplanation = ''
       }
-      if (ev.phase === 'generating_sql' || ev.phase === 'retrying_sql' || ev.phase === 'refining_sql') {
-        return { ...base, phase: ev.phase, partialSql: '' }
-      }
-      return { ...base, phase: ev.phase }
+      return next
+    }
     case 'sql_token':
       // Accumulate model tokens into the right buffer based on phase.
       if (ev.phase === 'explaining') {
