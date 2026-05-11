@@ -405,8 +405,22 @@ class DataPreProcess:
     _OS_CANONICAL_MAP = {
         'Harmony': 'HarmonyOS',
         'Android-based': 'Android',
-        'Symbian^3,': 'Symbian',
+        'Symbian^3': 'Symbian',  # post-rstrip; map key has no trailing comma
+        # Bare-vendor variants of multi-word OS names. The multi-word prefix
+        # check below already catches the full form ('Firefox OS 1.3' →
+        # 'Firefox OS'); this map fixes the short form ('Firefox 2.0' →
+        # 'Firefox OS').
+        'Firefox': 'Firefox OS',
     }
+
+    # Multi-word OS names that would be wrongly truncated by a naive
+    # first-token split. Order matters only if one is a prefix of another;
+    # all current entries are disjoint.
+    _MULTIWORD_OS_PREFIXES = (
+        'Wear OS',
+        'Blue OS',
+        'Firefox OS',
+    )
 
     # Brand naming-variant fixes. All-caps brands (LG, ZTE, BLU, HTC) are
     # left alone — they're correctly that way upstream.
@@ -426,10 +440,21 @@ class DataPreProcess:
         )
 
     def _extract_os_from_first_space(self, os_string):
-
+        # Two-phase extraction:
+        #   1) Check known multi-word OS names ('Wear OS', 'Blue OS',
+        #      'Firefox OS') as a prefix of the source string. A naive
+        #      first-token split would mangle these into 'Wear' / 'Blue' /
+        #      'Firefox' and produce dropdown duplicates.
+        #   2) Otherwise take the first token, strip trailing punctuation
+        #      (so 'Android, Realme UI 3.0' yields 'Android' rather than
+        #      'Android,'), then apply the naming-variant canonical map.
         if not isinstance(os_string, str):
             return os_string
-        token = os_string.split(' ', 1)[0]
+        s = os_string.strip()
+        for prefix in self._MULTIWORD_OS_PREFIXES:
+            if s == prefix or s.startswith(prefix + ' ') or s.startswith(prefix + ','):
+                return prefix
+        token = s.split(' ', 1)[0].rstrip(',.;:')
         return self._OS_CANONICAL_MAP.get(token, token)
 
     def extract_os_version(self):
