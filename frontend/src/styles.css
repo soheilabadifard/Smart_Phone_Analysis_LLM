@@ -1,122 +1,915 @@
+/* =====================================================================
+   Catalogue №22 — editorial-print design system for the GSMArena
+   catalogue. Warm cream paper, deep ink, hot vermilion as the only
+   accent. Serif Fraunces for display + numerals, Bricolage Grotesque
+   for body, IBM Plex Mono for code and tabular figures.
+   ===================================================================== */
+
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color-scheme: light dark;
+  /* Palette — cream paper, deep ink, hot vermilion, soft secondary inks. */
+  --paper:        #efe7d6;
+  --paper-warm:   #e8dec9;
+  --paper-deep:   #ddd1b7;
+  --ink:          #181613;
+  --ink-soft:     #4a4138;
+  --ink-mute:     #7a6e5d;
+  --ink-faint:    #aa9f8a;
+  --rule:         #1f1b16;
+  --rule-soft:    rgba(24, 22, 19, 0.16);
+  --rule-faint:   rgba(24, 22, 19, 0.08);
+
+  --vermilion:    #c8331f;
+  --vermilion-dk: #962515;
+  --moss:         #4a6b2f;
+  --indigo:       #2c3c63;
+  --ochre:        #b88517;
+
+  /* Typography */
+  --font-display: 'Fraunces', 'Iowan Old Style', 'Hoefler Text', Georgia, serif;
+  --font-body:    'Bricolage Grotesque', 'Helvetica Neue', 'Inter', sans-serif;
+  --font-mono:    'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  /* Layout */
+  --gutter: clamp(1.25rem, 2.4vw, 2.25rem);
+  --page-max: 1280px;
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 
-body {
+html, body {
   margin: 0;
-  background: #0f1115;
-  color: #e6e8eb;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  font-feature-settings: 'ss01', 'ss02', 'kern';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-a { color: #6aa9ff; }
+/* Subtle paper texture — diagonal hairline pattern, very faint. */
+body {
+  background-image:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0,
+      transparent 7px,
+      rgba(24, 22, 19, 0.018) 7px,
+      rgba(24, 22, 19, 0.018) 8px
+    ),
+    radial-gradient(
+      ellipse at 20% 0%,
+      rgba(200, 51, 31, 0.04),
+      transparent 60%
+    );
+  min-height: 100vh;
+}
+
+a {
+  color: var(--vermilion);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+a:hover { color: var(--vermilion-dk); }
+
+::selection { background: var(--vermilion); color: var(--paper); }
+
+/* ---------------------------------------------------------------------
+   Page shell + masthead
+   --------------------------------------------------------------------- */
 
 .app {
-  max-width: 1200px;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: clamp(1rem, 2vw, 1.75rem) var(--gutter) 6rem;
 }
+
+.masthead {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 2px solid var(--rule);
+  margin-bottom: 0;
+}
+
+.masthead__runner {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.masthead__runner span:not(:last-child)::after {
+  content: '·';
+  margin-left: 1rem;
+  color: var(--ink-faint);
+}
+
+.masthead__title {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-style: normal;
+  font-size: clamp(2.4rem, 5.4vw, 4.25rem);
+  line-height: 0.92;
+  letter-spacing: -0.025em;
+  margin: 0;
+  font-variation-settings: 'opsz' 144, 'SOFT' 0, 'WONK' 0;
+}
+
+.masthead__title em {
+  font-style: italic;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+  color: var(--vermilion);
+}
+
+.masthead__issue {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.2;
+}
+
+.masthead__issue strong {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 2.1rem;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.masthead__deck {
+  margin: 0.85rem 0 0;
+  padding-bottom: 1rem;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(1rem, 1.45vw, 1.18rem);
+  line-height: 1.45;
+  color: var(--ink-soft);
+  max-width: 62ch;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+/* ---------------------------------------------------------------------
+   Tab navigation — editorial section nav
+   --------------------------------------------------------------------- */
 
 .tabs {
   display: flex;
-  gap: 0.25rem;
-  border-bottom: 1px solid #2a2f37;
-  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 1.4rem 0 2.2rem;
+  border-top: 1px solid var(--rule-soft);
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .tab {
-  padding: 0.6rem 1.1rem;
+  position: relative;
+  padding: 0.85rem 1.1rem 0.7rem;
   background: transparent;
   border: none;
-  color: #9aa3ad;
+  border-right: 1px solid var(--rule-faint);
+  color: var(--ink-soft);
   cursor: pointer;
-  font-size: 0.95rem;
-  border-bottom: 2px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 1;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.tab:last-of-type { border-right: none; }
+
+.tab::before {
+  content: counter(tab-counter, decimal-leading-zero);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-right: 0.55rem;
+  color: var(--ink-faint);
+  text-transform: none;
+}
+.tabs { counter-reset: tab-counter; }
+.tab { counter-increment: tab-counter; }
+
+.tab:hover {
+  color: var(--ink);
+  background: rgba(24, 22, 19, 0.04);
 }
 
 .tab.active {
-  color: #fff;
-  border-bottom-color: #6aa9ff;
+  color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
 }
 
-.card {
-  background: #161a21;
-  border: 1px solid #2a2f37;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
+.tab.active::before { color: var(--vermilion); }
+
+.tab:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: -2px;
 }
+
+/* ---------------------------------------------------------------------
+   Section anatomy
+   --------------------------------------------------------------------- */
+
+.section {
+  margin: 2.6rem 0 0.6rem;
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 1.25rem;
+  align-items: baseline;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.6rem;
+}
+
+.section__no {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 2.4rem;
+  line-height: 0.9;
+  color: var(--vermilion);
+  letter-spacing: -0.03em;
+  font-variation-settings: 'opsz' 144;
+  text-align: right;
+}
+
+.section__no::before { content: '§ '; color: var(--ink-faint); font-style: normal; }
+
+.section__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  letter-spacing: -0.022em;
+  margin: 0;
+  font-variation-settings: 'opsz' 144;
+  color: var(--ink);
+  line-height: 1.05;
+}
+
+.section__kicker {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.3rem;
+  display: block;
+}
+
+/* h2 inside views maps to the same section block (lighter weight). */
+.app h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 2.4rem 0 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ---------------------------------------------------------------------
+   Cards (kept as a class because views use it heavily). Now styled as
+   editorial blocks — no rounded corners, no shadows. A single hairline
+   rule at top and bottom, generous internal padding.
+   --------------------------------------------------------------------- */
+
+.card {
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule-soft);
+  border-radius: 0;
+  padding: 1.4rem 0 1.6rem;
+  margin: 0 0 1.4rem;
+  position: relative;
+}
+
+/* When a card holds a chart, give it a subtle paper-warm well so the
+   Plotly cream blends. */
+.card:has(.js-plotly-plot),
+.card:has(table) {
+  padding-top: 1.5rem;
+}
+
+.card > h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -0.014em;
+  color: var(--ink);
+  margin: 0 0 0.25rem;
+  font-variation-settings: 'opsz' 36;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.card > h3::before {
+  content: '▸';
+  color: var(--vermilion);
+  font-size: 0.85rem;
+  display: inline-block;
+  transform: translateY(-1px);
+}
+
+.card > p:first-of-type {
+  color: var(--ink-mute);
+  font-size: 0.88rem;
+  margin: 0 0 0.85rem;
+  font-style: italic;
+  font-family: var(--font-display);
+}
+
+/* ---------------------------------------------------------------------
+   Form controls — spec-sheet aesthetic. Inputs underlined, no boxes.
+   --------------------------------------------------------------------- */
 
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.75rem;
+  gap: 1.1rem 1.4rem;
+  padding: 0.4rem 0 0.2rem;
 }
 
 label {
   display: flex;
   flex-direction: column;
-  font-size: 0.85rem;
-  color: #9aa3ad;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  gap: 0.35rem;
 }
 
-input, select {
-  margin-top: 0.25rem;
-  padding: 0.5rem 0.6rem;
-  background: #0f1115;
-  border: 1px solid #2a2f37;
-  border-radius: 4px;
-  color: #e6e8eb;
-  font: inherit;
-}
-
-button.primary {
-  margin-top: 1rem;
-  padding: 0.6rem 1.2rem;
-  background: #6aa9ff;
-  color: #0f1115;
+input, select, textarea {
+  margin-top: 0;
+  padding: 0.55rem 0.1rem;
+  background: transparent;
   border: none;
-  border-radius: 4px;
-  font-weight: 600;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+input[type="number"],
+input[type="text"] {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-bottom-color: var(--vermilion);
+}
+
+input::placeholder { color: var(--ink-faint); font-weight: 400; }
+
+select {
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+                    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 60%,
+    calc(100% - 9px) 60%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.5rem;
   cursor: pointer;
 }
 
-button.primary:disabled { opacity: 0.6; cursor: wait; }
+select[multiple] {
+  background-image: none;
+  padding-right: 0.1rem;
+  padding-top: 0.25rem;
+  min-height: 5.5rem;
+  border: 1px solid var(--rule-soft);
+  padding: 0.4rem 0.5rem;
+  background-color: rgba(24, 22, 19, 0.025);
+}
+select[multiple] option {
+  padding: 0.2rem 0.3rem;
+  font-family: var(--font-body);
+}
+select[multiple] option:checked {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  border: 1.5px solid var(--ink);
+  border-bottom-width: 1.5px;
+  background: var(--paper);
+  cursor: pointer;
+  position: relative;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 0;
+  flex: 0 0 auto;
+}
+input[type="checkbox"]:checked {
+  background: var(--vermilion);
+  border-color: var(--vermilion);
+}
+input[type="checkbox"]:checked::after {
+  content: '×';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--paper);
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+/* Buttons -------------------------------------------------------------- */
+
+button.primary {
+  margin-top: 1.4rem;
+  padding: 0.75rem 1.4rem;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease, transform 0.05s ease;
+  box-shadow: 4px 4px 0 var(--vermilion);
+}
+button.primary::before {
+  content: '▸';
+  margin-right: 0.6rem;
+  color: var(--vermilion);
+  display: inline-block;
+}
+button.primary:hover:not(:disabled) {
+  background: var(--vermilion);
+  color: var(--paper);
+}
+button.primary:hover:not(:disabled)::before { color: var(--paper); }
+button.primary:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--vermilion);
+}
+button.primary:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  box-shadow: 4px 4px 0 var(--ink-faint);
+}
+
+/* Generic ghost button (used for Reset conversation etc.) */
+button.ghost,
+.app button:not(.primary):not(.tab):not(.chip) {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+button.ghost:hover,
+.app button:not(.primary):not(.tab):not(.chip):hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* Suggestion chips */
+.chip {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.3;
+}
+.chip:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.chip::before {
+  content: '“';
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--vermilion);
+  margin-right: 0.2rem;
+}
+.chip::after {
+  content: '”';
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--vermilion);
+  margin-left: 0.1rem;
+}
+
+/* ---------------------------------------------------------------------
+   Tables — catalogue spec tables. Hairline rules, tabular numerals,
+   small caps headers, ink black on cream.
+   --------------------------------------------------------------------- */
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums lining-nums;
+  margin: 0.4rem 0 0;
 }
 
-th, td {
-  padding: 0.5rem 0.6rem;
+thead tr {
+  border-bottom: 2px solid var(--rule);
+}
+th {
   text-align: left;
-  border-bottom: 1px solid #2a2f37;
+  padding: 0.65rem 0.75rem 0.5rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border: none;
+  vertical-align: bottom;
 }
 
-th { color: #9aa3ad; font-weight: 500; }
+tbody tr {
+  border-bottom: 1px solid var(--rule-faint);
+  transition: background 0.1s ease;
+}
+tbody tr:nth-child(even) {
+  background: rgba(24, 22, 19, 0.025);
+}
+tbody tr:hover {
+  background: rgba(200, 51, 31, 0.07);
+}
 
-pre.sql {
-  background: #0a0d12;
-  padding: 0.8rem;
-  border-radius: 4px;
+td {
+  padding: 0.55rem 0.75rem 0.55rem 0;
+  border: none;
+  color: var(--ink);
+}
+
+/* Wrap long table content for scroll. */
+.card > div[style*="overflow"] table,
+.card .table-wrap table { min-width: 600px; }
+
+/* ---------------------------------------------------------------------
+   Code / SQL pre block — typewriter monospace, ink on warm paper.
+   --------------------------------------------------------------------- */
+
+pre.sql,
+pre {
+  background: var(--paper-warm);
+  border-left: 3px solid var(--vermilion);
+  padding: 0.95rem 1.1rem;
+  border-radius: 0;
   overflow-x: auto;
-  font-size: 0.85rem;
-  color: #b8e0ff;
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0.7rem 0;
+  position: relative;
 }
+
+pre.sql::before {
+  content: 'SQL';
+  position: absolute;
+  top: -0.6rem;
+  left: 1rem;
+  background: var(--paper);
+  padding: 0 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  color: var(--vermilion);
+  font-weight: 600;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: rgba(24, 22, 19, 0.06);
+  padding: 0.05em 0.35em;
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------------------
+   Errors / notices
+   --------------------------------------------------------------------- */
 
 .error {
-  background: #3a1a1a;
-  border: 1px solid #6b2828;
-  color: #ffb3b3;
-  padding: 0.8rem;
-  border-radius: 4px;
+  background: rgba(200, 51, 31, 0.08);
+  border: none;
+  border-left: 3px solid var(--vermilion);
+  color: var(--vermilion-dk);
+  padding: 0.75rem 1rem;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  margin: 1rem 0;
+}
+
+.error::before {
+  content: '⚠ ';
+  font-weight: 700;
+  margin-right: 0.3rem;
+}
+
+/* ---------------------------------------------------------------------
+   Pipeline progress strip (AskView) — minimal letterpress pills
+   --------------------------------------------------------------------- */
+
+.pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.4rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--rule-soft);
+  border-bottom: 1px solid var(--rule-soft);
+  margin: 0.4rem 0 1rem;
+  font-family: var(--font-mono);
+}
+
+.pipeline__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border: 1px solid var(--rule-soft);
+  border-radius: 999px;
+  color: var(--ink-mute);
+}
+.pipeline__pill[data-status="active"] {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.pipeline__pill[data-status="done"] {
+  color: var(--ink);
+  border-color: var(--rule);
+}
+.pipeline__pill[data-status="done"] .pipeline__icon { color: var(--moss); }
+.pipeline__sep {
+  font-family: var(--font-display);
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+.pipeline__icon {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.85rem;
 }
 
 @keyframes blink {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0; }
+  50%      { opacity: 0.15; }
+}
+
+/* ---------------------------------------------------------------------
+   Explanation callout (Ask)
+   --------------------------------------------------------------------- */
+
+.callout-explanation {
+  background: var(--paper-warm);
+  border: none;
+  border-left: 3px solid var(--ink);
+  border-radius: 0;
+  padding: 1rem 1.2rem;
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: var(--ink);
+  font-style: italic;
+  font-variation-settings: 'opsz' 24;
+  position: relative;
+}
+.callout-explanation::before {
+  content: 'Reading the result';
+  display: block;
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.62rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 0.45rem;
+}
+
+/* ---------------------------------------------------------------------
+   Filter sub-controls strip (analytics CI controls)
+   --------------------------------------------------------------------- */
+
+.controls-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule-soft);
+  margin-bottom: 1rem;
+}
+.controls-strip > strong {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 600;
+}
+.controls-strip label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.controls-strip select {
+  border-bottom: 1px solid var(--ink);
+  padding: 0.25rem 1.2rem 0.25rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  width: auto;
+}
+
+/* ---------------------------------------------------------------------
+   Stats inline figure row (used by regression tables, residual panels)
+   --------------------------------------------------------------------- */
+
+.stat-row {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--rule-faint);
+  margin-bottom: 0.8rem;
+}
+.stat-row span b {
+  font-weight: 600;
+  color: var(--ink-mute);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-right: 0.45rem;
+}
+
+/* ---------------------------------------------------------------------
+   Details / summary (collapsible attempt history)
+   --------------------------------------------------------------------- */
+
+details summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding: 0.4rem 0;
+  list-style: none;
+}
+details summary::before {
+  content: '+';
+  margin-right: 0.5rem;
+  color: var(--vermilion);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+details[open] summary::before { content: '−'; }
+details summary::-webkit-details-marker { display: none; }
+
+/* ---------------------------------------------------------------------
+   Recommend results counter (the "N results" header)
+   --------------------------------------------------------------------- */
+
+.results-header {
+  font-family: var(--font-display);
+  font-style: italic;
+  color: var(--ink-soft);
+  margin: 0 0 0.8rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  font-variation-settings: 'opsz' 36;
+}
+.results-header::first-letter {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-style: normal;
+  font-size: 1.6rem;
+  color: var(--vermilion);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------
+   Plotly overrides — keep their cards visually integrated.
+   --------------------------------------------------------------------- */
+
+.js-plotly-plot .modebar {
+  background: transparent !important;
+}
+.js-plotly-plot .modebar-btn path { fill: var(--ink-mute) !important; }
+.js-plotly-plot .modebar-btn.active path,
+.js-plotly-plot .modebar-btn:hover path { fill: var(--vermilion) !important; }
+
+/* ---------------------------------------------------------------------
+   Misc
+   --------------------------------------------------------------------- */
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 1.5rem 0;
+}
+
+/* Tiny "kind" badges used in attempts list. We avoid inline styles in
+   AskView for these so the theme can re-skin them. */
+.kind-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  margin-left: 0.5rem;
+  border-radius: 0;
+}
+.kind-badge--review     { color: var(--indigo); }
+.kind-badge--execution  { color: var(--vermilion-dk); }
+
+/* Responsive ------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+  .masthead {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .masthead__issue { text-align: left; }
+  .section { grid-template-columns: 2.5rem 1fr; gap: 0.75rem; }
+  .section__no { font-size: 1.6rem; }
 }
