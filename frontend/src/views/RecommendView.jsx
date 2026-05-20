@@ -30,6 +30,7 @@ export default function RecommendView() {
   const [selectedBrands, setSelectedBrands] = useState([])
   const [osList, setOsList] = useState([])
   const [results, setResults] = useState([])
+  const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -68,6 +69,7 @@ export default function RecommendView() {
       })
       if (!res.ok) throw new Error(await res.text())
       setResults(await res.json())
+      setSubmitted(true)
     } catch (err) {
       setError(String(err))
     } finally {
@@ -77,20 +79,30 @@ export default function RecommendView() {
 
   return (
     <div>
-      <form className="card" onSubmit={submit}>
+      <header className="section">
+        <div className="section__no">01</div>
+        <div>
+          <span className="section__kicker">Filtered query · typed Pydantic → SQL</span>
+          <h2 className="section__title" style={{ margin: 0, border: 'none', padding: 0 }}>
+            Spec-sheet recommender
+          </h2>
+        </div>
+      </header>
+
+      <form className="card" onSubmit={submit} style={{ borderTop: 'none', paddingTop: 0 }}>
         <div className="form-grid">
           <label>
             Max price (EUR)
-            <input type="number" min="0" step="10" value={filters.max_price_eur} onChange={(e) => update('max_price_eur', e.target.value)} />
+            <input type="number" min="0" step="10" value={filters.max_price_eur} onChange={(e) => update('max_price_eur', e.target.value)} placeholder="any" />
           </label>
           <label>
-            Brands (multi-select)
+            Brands (multi)
             <select multiple size="4" value={selectedBrands} onChange={(e) => setSelectedBrands(Array.from(e.target.selectedOptions, (o) => o.value))}>
               {brands.map((b) => (<option key={b}>{b}</option>))}
             </select>
           </label>
           <label>
-            OS
+            Operating system
             <select value={filters.os_name} onChange={(e) => update('os_name', e.target.value)}>
               <option value="">Any</option>
               {osList.map((o) => (<option key={o}>{o}</option>))}
@@ -98,27 +110,27 @@ export default function RecommendView() {
           </label>
           <label>
             Min RAM (GB)
-            <input type="number" min="0" value={filters.min_ram_gb} onChange={(e) => update('min_ram_gb', e.target.value)} />
+            <input type="number" min="0" value={filters.min_ram_gb} onChange={(e) => update('min_ram_gb', e.target.value)} placeholder="—" />
           </label>
           <label>
             Min storage (GB)
-            <input type="number" min="0" value={filters.min_storage_gb} onChange={(e) => update('min_storage_gb', e.target.value)} />
+            <input type="number" min="0" value={filters.min_storage_gb} onChange={(e) => update('min_storage_gb', e.target.value)} placeholder="—" />
           </label>
           <label>
             Min battery (mAh)
-            <input type="number" min="0" step="100" value={filters.min_battery_mah} onChange={(e) => update('min_battery_mah', e.target.value)} />
+            <input type="number" min="0" step="100" value={filters.min_battery_mah} onChange={(e) => update('min_battery_mah', e.target.value)} placeholder="—" />
           </label>
           <label>
-            Min display (inch)
-            <input type="number" min="0" step="0.1" value={filters.min_display_inch} onChange={(e) => update('min_display_inch', e.target.value)} />
+            Min display (in)
+            <input type="number" min="0" step="0.1" value={filters.min_display_inch} onChange={(e) => update('min_display_inch', e.target.value)} placeholder="—" />
           </label>
           <label>
-            Max display (inch)
-            <input type="number" min="0" step="0.1" value={filters.max_display_inch} onChange={(e) => update('max_display_inch', e.target.value)} />
+            Max display (in)
+            <input type="number" min="0" step="0.1" value={filters.max_display_inch} onChange={(e) => update('max_display_inch', e.target.value)} placeholder="—" />
           </label>
-          <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+          <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.6rem', alignSelf: 'end', paddingBottom: '0.4rem' }}>
             <input type="checkbox" checked={filters.require_5g} onChange={(e) => update('require_5g', e.target.checked)} />
-            Require 5G
+            <span>Require 5G</span>
           </label>
           <label>
             Form factor
@@ -152,33 +164,55 @@ export default function RecommendView() {
 
       {results.length > 0 && (
         <div className="card">
-          <p style={{ marginTop: 0 }}>{results.length} result{results.length === 1 ? '' : 's'}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>Brand</th><th>Model</th><th>Year</th><th>Type</th><th>Price (€)</th>
-                <th>RAM</th><th>Storage</th><th>Battery</th><th>Display</th>
-                <th>OS</th><th>Chipset</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r) => (
-                <tr key={r.device_id}>
-                  <td>{r.brand}</td>
-                  <td>{r.model}</td>
-                  <td>{r.year}</td>
-                  <td style={{ textTransform: 'capitalize' }}>{r.form_factor}</td>
-                  <td>{r.price_eur ?? '—'}</td>
-                  <td>{r.ram_gb ?? '—'}</td>
-                  <td>{r.storage_gb ?? '—'}</td>
-                  <td>{r.battery_mah ?? '—'}</td>
-                  <td>{r.display_inch ?? '—'}″</td>
-                  <td>{r.os ?? '—'}</td>
-                  <td>{r.chipset ?? '—'}</td>
+          <h3>Catalogue results</h3>
+          <p className="results-header">
+            {`${results.length} result${results.length === 1 ? '' : 's'} matched`}
+            <span style={{ color: 'var(--ink-faint)' }}> — sorted by {filters.sort_by}, {filters.sort_order}ending</span>
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: '2.5rem' }}>No.</th>
+                  <th>Brand</th><th>Model</th><th>Year</th><th>Type</th>
+                  <th style={{ textAlign: 'right' }}>Price (€)</th>
+                  <th style={{ textAlign: 'right' }}>RAM</th>
+                  <th style={{ textAlign: 'right' }}>Storage</th>
+                  <th style={{ textAlign: 'right' }}>Battery</th>
+                  <th style={{ textAlign: 'right' }}>Display</th>
+                  <th>OS</th><th>Chipset</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {results.map((r, i) => (
+                  <tr key={r.device_id}>
+                    <td style={{ color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+                      {(i + 1).toString().padStart(2, '0')}
+                    </td>
+                    <td style={{ fontFamily: 'var(--font-display)', fontWeight: 600, letterSpacing: '-0.01em' }}>{r.brand}</td>
+                    <td>{r.model}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--ink-soft)' }}>{r.year}</td>
+                    <td style={{ textTransform: 'capitalize', color: 'var(--ink-soft)' }}>{r.form_factor}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.price_eur ?? '—'}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.ram_gb ?? '—'}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.storage_gb ?? '—'}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.battery_mah ?? '—'}</td>
+                    <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.display_inch ? `${r.display_inch}″` : '—'}</td>
+                    <td>{r.os ?? '—'}</td>
+                    <td style={{ color: 'var(--ink-soft)' }}>{r.chipset ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {submitted && !loading && results.length === 0 && !error && (
+        <div className="card" style={{ textAlign: 'center', padding: '2.5rem 0 2.8rem', color: 'var(--ink-mute)' }}>
+          <p style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', fontSize: '1.1rem', margin: 0 }}>
+            No devices matched these constraints. Try widening one of them.
+          </p>
         </div>
       )}
     </div>
