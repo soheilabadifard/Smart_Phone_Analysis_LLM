@@ -4,38 +4,50 @@ import { humanizeColumnName } from '../utils/format.js'
 
 export { humanizeColumnName }
 
+function SectionHeader({ no, kicker, title }) {
+  return (
+    <header className="section">
+      <div className="section__no">{no}</div>
+      <div>
+        <span className="section__kicker">{kicker}</span>
+        <h2 className="section__title" style={{ margin: 0, border: 'none', padding: 0 }}>
+          {title}
+        </h2>
+      </div>
+    </header>
+  )
+}
+
 function ErrorPanel({ error }) {
   if (error.kind === 'plain') {
     return <div className="error">{error.message}</div>
   }
   // pipeline_failure: render the structured attempt history.
   return (
-    <div className="card" style={{ borderLeft: '3px solid #e07070' }}>
-      <h3 style={{ marginTop: 0, color: '#ffb3b3' }}>Ask pipeline gave up</h3>
-      <p style={{ marginTop: 0 }}>{error.message}</p>
+    <div className="card" style={{ borderTop: `2px solid var(--vermilion)`, paddingTop: '1.2rem' }}>
+      <h3 style={{ color: 'var(--vermilion-dk)' }}>Ask pipeline gave up</h3>
+      <p style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'var(--ink)' }}>{error.message}</p>
       {error.lastError && (
-        <p style={{ color: '#ffb3b3', fontSize: '0.9rem' }}>
+        <p style={{ color: 'var(--vermilion-dk)', fontFamily: 'var(--font-mono)', fontSize: '0.84rem' }}>
           Last error: <code>{error.lastError}</code>
         </p>
       )}
       <details>
-        <summary style={{ cursor: 'pointer', color: '#9aa3ad' }}>
+        <summary>
           Show {error.attempts.length} attempt{error.attempts.length === 1 ? '' : 's'}
         </summary>
         {error.attempts.map((a, i) => (
-          <div key={i} style={{ marginTop: '0.6rem' }}>
-            <div style={{ color: '#9aa3ad', fontSize: '0.8rem' }}>
-              Attempt {i + 1}
-              <span style={{ marginLeft: '0.4rem', padding: '0.05rem 0.4rem', borderRadius: 4,
-                             background: a.kind === 'review' ? '#2a3a4a' : '#3a2a2a',
-                             color: a.kind === 'review' ? '#9bd1ff' : '#ffb3b3' }}>
+          <div key={i} style={{ marginTop: '0.85rem' }}>
+            <div style={{ color: 'var(--ink-mute)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+              Attempt {(i + 1).toString().padStart(2, '0')}
+              <span className={`kind-badge kind-badge--${a.kind === 'review' ? 'review' : 'execution'}`}>
                 {a.kind}
               </span>
             </div>
-            <pre className="sql" style={{ opacity: 0.7 }}>{a.sql}</pre>
+            <pre className="sql" style={{ opacity: 0.85 }}>{a.sql}</pre>
             {a.error && <div className="error" style={{ marginTop: '0.3rem' }}>{a.error}</div>}
             {a.judgment && (
-              <div style={{ marginTop: '0.3rem', color: '#9bd1ff', fontStyle: 'italic', fontSize: '0.85rem' }}>
+              <div style={{ marginTop: '0.4rem', color: 'var(--indigo)', fontStyle: 'italic', fontSize: '0.9rem', fontFamily: 'var(--font-display)' }}>
                 LLM judgment: {a.judgment}
               </div>
             )}
@@ -72,10 +84,6 @@ const PHASE_LABELS = {
   explaining:     'Writing explanation…',
 }
 
-// The four canonical pipeline stages we show in the progress strip. The
-// 'executing' stage matches `executing_sql` (emitted by the backend right
-// after _streamed_chat returns) and `__executing__` (synthesised on the
-// frontend from the `executed` event as a no-event-gap fallback).
 const PIPELINE_STAGES = [
   { key: 'generating', label: 'Generating SQL', match: ['generating_sql', 'retrying_sql', 'refining_sql'] },
   { key: 'executing',  label: 'Executing SQL', match: ['executing_sql', '__executing__'] },
@@ -85,14 +93,10 @@ const PIPELINE_STAGES = [
 
 const SQL_GENERATING_PHASES = new Set(['generating_sql', 'retrying_sql', 'refining_sql'])
 
-// Pull the SQL out of a fenced ```sql … ``` block. Falls back to the raw
-// text (stripped) so a partially-arrived block still resolves to something
-// useful when the phase advances mid-emit.
 function extractSqlFromPartial(partial) {
   if (!partial) return ''
   const m = partial.match(/```(?:sql)?\s*([\s\S]*?)```/i)
   if (m) return m[1].trim()
-  // Open fence without close — strip the opening fence prefix if present
   const openOnly = partial.match(/```(?:sql)?\s*([\s\S]*)$/i)
   if (openOnly) return openOnly[1].trim()
   return partial.trim()
@@ -103,54 +107,36 @@ function stageIndexFor(phase) {
 }
 
 function PipelineProgress({ answer, finalised }) {
-  // Resolve the active phase:
-  //   - finalised → no active stage (everything below renders as done)
-  //   - answer has a phase → that one
-  //   - mid-fetch but no events yet → assume 'generating_sql' so the strip
-  //     doesn't appear inert in the first second after submission.
   let phase
   if (finalised) phase = null
   else if (answer?.phase) phase = answer.phase
   else phase = 'generating_sql'
   const activeIdx = phase ? stageIndexFor(phase) : -1
   return (
-    <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 0.9rem' }}>
+    <div className="pipeline">
       {PIPELINE_STAGES.map((stage, i) => {
         let status
-        if (finalised) {
-          status = 'done'
-        } else if (activeIdx === -1) {
-          status = 'pending'
-        } else if (i < activeIdx) {
-          status = 'done'
-        } else if (i === activeIdx) {
-          status = 'active'
-        } else {
-          status = 'pending'
-        }
-        const color = status === 'done' ? '#62c699'
-                    : status === 'active' ? '#9bd1ff' : '#5a6168'
-        const bg = status === 'active' ? '#1d2531' : 'transparent'
-        const icon = status === 'done' ? '✓' : status === 'active' ? '⟳' : '·'
+        if (finalised) status = 'done'
+        else if (activeIdx === -1) status = 'pending'
+        else if (i < activeIdx) status = 'done'
+        else if (i === activeIdx) status = 'active'
+        else status = 'pending'
+        const icon = status === 'done' ? '✓' : status === 'active' ? '◐' : '○'
         return (
-          <span key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <span key={stage.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
             <span
+              className="pipeline__pill"
               data-testid={`pipeline-stage-${stage.key}`}
               data-status={status}
-              style={{
-                color, background: bg, fontSize: '0.85rem',
-                padding: '0.25rem 0.6rem', borderRadius: 999,
-                border: `1px solid ${status === 'active' ? '#2a3a4a' : 'transparent'}`,
-              }}
             >
-              <span style={{
-                display: 'inline-block', marginRight: '0.35rem',
-                animation: status === 'active' ? 'blink 1s step-end infinite' : 'none',
-              }}>{icon}</span>
+              <span
+                className="pipeline__icon"
+                style={{ animation: status === 'active' ? 'blink 1s step-end infinite' : 'none' }}
+              >{icon}</span>
               {stage.label}
             </span>
             {i < PIPELINE_STAGES.length - 1 && (
-              <span style={{ color: '#3a3f47', fontSize: '0.75rem' }}>›</span>
+              <span className="pipeline__sep">/</span>
             )}
           </span>
         )
@@ -159,8 +145,6 @@ function PipelineProgress({ answer, finalised }) {
   )
 }
 
-// Process one NDJSON event from /api/ask/stream against the partial-answer
-// state. Returns the next answer state, or null if the event isn't relevant.
 function applyEvent(prev, ev) {
   const base = prev || {
     question: '', sql: '', columns: [], rows: [], attempts: [],
@@ -169,14 +153,6 @@ function applyEvent(prev, ev) {
   }
   switch (ev.type) {
     case 'phase': {
-      // Entering a new pipeline phase. Two transitions need special care:
-      //   - From an SQL-streaming phase into anything else (typically
-      //     `executing_sql`): the partial buffer holds the full ```sql…```
-      //     block, so we lift it into `answer.sql` here. This is what makes
-      //     the caret disappear the moment generation ends, even if the
-      //     downstream DB call hasn't fired yet.
-      //   - Into an SQL-streaming phase: reset both buffers so old tokens
-      //     don't bleed into a fresh attempt.
       const wasGenerating = SQL_GENERATING_PHASES.has(base.phase)
       const goingToGenerate = SQL_GENERATING_PHASES.has(ev.phase)
       let next = { ...base, phase: ev.phase }
@@ -195,7 +171,6 @@ function applyEvent(prev, ev) {
       return next
     }
     case 'sql_token':
-      // Accumulate model tokens into the right buffer based on phase.
       if (ev.phase === 'explaining') {
         return { ...base, partialExplanation: (base.partialExplanation || '') + ev.content }
       }
@@ -203,21 +178,16 @@ function applyEvent(prev, ev) {
     case 'attempt':
       return { ...base, attempts: [...base.attempts, ev.attempt] }
     case 'executed':
-      // Render rows immediately so the user sees the result before the
-      // review/explanation turns finish. Set a synthetic phase so the
-      // pipeline-progress strip advances past 'Generating SQL' into
-      // 'Executing SQL' until the next real phase event arrives.
       return {
         ...base,
         sql: ev.sql,
         columns: ev.columns,
         rows: ev.rows,
         truncated: !!ev.truncated,
-        partialSql: '',  // SQL is now finalised; clear the streaming buffer
+        partialSql: '',
         phase: '__executing__',
       }
     case 'result':
-      // Replace state with the final accepted answer (carries explanation).
       return {
         question: ev.question, sql: ev.sql,
         columns: ev.columns, rows: ev.rows,
@@ -273,7 +243,6 @@ export default function AskView() {
     try {
       const res = await fetch('/api/ask/stream', { method: 'POST', headers, body })
 
-      // Streaming path: incremental NDJSON events.
       if (res.ok && res.body && typeof res.body.getReader === 'function') {
         setStreaming(true)
         let partial = null
@@ -301,7 +270,6 @@ export default function AskView() {
         return
       }
 
-      // Fallback: legacy non-streaming response (or test mocks without body).
       const text = await res.text()
       let parsed
       try {
@@ -351,33 +319,45 @@ export default function AskView() {
 
   return (
     <div>
-      <form className="card" onSubmit={submit}>
+      <SectionHeader
+        no="07"
+        kicker="Natural-language oracle · NL → SQL → result"
+        title="Ask the catalogue"
+      />
+
+      <form className="card" onSubmit={submit} style={{ borderTop: 'none', paddingTop: 0 }}>
         <label>
-          Ask a question about the smartphone database
+          Pose a question in plain English
           <input
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="e.g. Which Xiaomi phones in 2023 cost under 400 EUR?"
-            style={{ fontSize: '1rem', padding: '0.7rem' }}
+            style={{
+              fontSize: '1.15rem',
+              padding: '0.85rem 0.1rem',
+              fontFamily: 'var(--font-display)',
+              fontStyle: 'italic',
+              fontWeight: 400,
+              letterSpacing: '-0.012em',
+              borderBottom: '2px solid var(--ink)',
+              marginTop: '0.5rem',
+            }}
           />
         </label>
-        <div style={{ marginTop: '0.6rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+        <div style={{ marginTop: '0.9rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               type="button"
+              className="chip"
               onClick={() => setQuestion(s)}
-              style={{
-                background: '#1d2229', border: '1px solid #2a2f37', color: '#9aa3ad',
-                padding: '0.3rem 0.6rem', borderRadius: 999, cursor: 'pointer', fontSize: '0.8rem',
-              }}
             >
               {s}
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginTop: '0.6rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', marginTop: '1rem', flexWrap: 'wrap' }}>
           <button className="primary" type="submit" disabled={loading}>
             {loading
               ? (answer?.phase && PHASE_LABELS[answer.phase]
@@ -388,17 +368,14 @@ export default function AskView() {
           {sessionId && (
             <button
               type="button"
+              className="ghost"
               onClick={resetSession}
-              style={{
-                background: 'transparent', border: '1px solid #444', color: '#9aa3ad',
-                padding: '0.3rem 0.7rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem',
-              }}
             >
               Reset conversation
             </button>
           )}
           {sessionId && (
-            <span style={{ color: '#6a737d', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+            <span style={{ color: 'var(--ink-mute)', fontSize: '0.74rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em' }}>
               session: {sessionId.slice(0, 8)}…
             </span>
           )}
@@ -414,46 +391,42 @@ export default function AskView() {
       {answer && (
         <>
           <div className="card">
-            <h3 style={{ marginTop: 0 }}>
+            <h3>
               Generated SQL
               {loading && answer.phase && PHASE_LABELS[answer.phase] && (
-                <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#9bd1ff' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--indigo)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   · {PHASE_LABELS[answer.phase]}
                 </span>
               )}
               {answer.attempts && answer.attempts.length > 1 && (
-                <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#f0c674' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--ochre)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   · {answer.attempts.length} attempts ({summariseAttempts(answer.attempts)})
                 </span>
               )}
             </h3>
-            {/* Prefer the finalised `sql` once we've got it; otherwise show
-                the tokens streaming in with a blinking caret. */}
             <pre className="sql">
               {answer.sql || answer.partialSql || ''}
               {!answer.sql && answer.partialSql !== undefined && answer.partialSql !== '' && (
-                <span style={{ animation: 'blink 1s step-end infinite' }}>▌</span>
+                <span style={{ animation: 'blink 1s step-end infinite', color: 'var(--vermilion)' }}>▌</span>
               )}
             </pre>
             {answer.attempts && answer.attempts.length > 1 && (
               <details style={{ marginTop: '0.6rem' }}>
-                <summary style={{ cursor: 'pointer', color: '#9aa3ad' }}>
+                <summary>
                   Show {answer.attempts.length - 1} earlier attempt{answer.attempts.length - 1 === 1 ? '' : 's'}
                 </summary>
                 {answer.attempts.slice(0, -1).map((a, i) => (
-                  <div key={i} style={{ marginTop: '0.6rem' }}>
-                    <div style={{ color: '#9aa3ad', fontSize: '0.8rem' }}>
-                      Attempt {i + 1}
-                      <span style={{ marginLeft: '0.4rem', padding: '0.05rem 0.4rem', borderRadius: 4,
-                                     background: a.kind === 'review' ? '#2a3a4a' : '#3a2a2a',
-                                     color: a.kind === 'review' ? '#9bd1ff' : '#ffb3b3' }}>
+                  <div key={i} style={{ marginTop: '0.85rem' }}>
+                    <div style={{ color: 'var(--ink-mute)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
+                      Attempt {(i + 1).toString().padStart(2, '0')}
+                      <span className={`kind-badge kind-badge--${a.kind === 'review' ? 'review' : 'execution'}`}>
                         {a.kind === 'review' ? 'review' : 'execution'}
                       </span>
                     </div>
-                    <pre className="sql" style={{ opacity: 0.7 }}>{a.sql}</pre>
+                    <pre className="sql" style={{ opacity: 0.85 }}>{a.sql}</pre>
                     {a.error && <div className="error" style={{ marginTop: '0.3rem' }}>{a.error}</div>}
                     {a.judgment && (
-                      <div style={{ marginTop: '0.3rem', color: '#9bd1ff', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                      <div style={{ marginTop: '0.4rem', color: 'var(--indigo)', fontStyle: 'italic', fontSize: '0.9rem', fontFamily: 'var(--font-display)' }}>
                         LLM judgment: {a.judgment}
                       </div>
                     )}
@@ -463,24 +436,19 @@ export default function AskView() {
             )}
           </div>
           <div className="card">
-            <h3 style={{ marginTop: 0 }}>
-              Result · {answer.rows.length} row{answer.rows.length === 1 ? '' : 's'}
+            <h3>
+              Result
+              <span style={{ color: 'var(--ink-mute)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                · {answer.rows.length} row{answer.rows.length === 1 ? '' : 's'}
+              </span>
               {answer.truncated && (
-                <span style={{ marginLeft: '0.6rem', fontSize: '0.78rem', color: '#f0c674' }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--ochre)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   · truncated to row cap
                 </span>
               )}
             </h3>
             {(answer.explanation || answer.partialExplanation) && (
-              <div style={{
-                background: '#1d2531', border: '1px solid #2a3a4a',
-                borderLeft: '3px solid #6aa9ff', borderRadius: 4,
-                padding: '0.7rem 0.9rem', marginBottom: '0.8rem',
-                color: '#cfdaeb', fontSize: '0.95rem', lineHeight: 1.45,
-              }}>
-                <div style={{ color: '#9bd1ff', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>
-                  LLM explanation
-                </div>
+              <div className="callout-explanation">
                 {answer.explanation || answer.partialExplanation}
                 {!answer.explanation && answer.partialExplanation && (
                   <span style={{ animation: 'blink 1s step-end infinite' }}>▌</span>
@@ -488,7 +456,7 @@ export default function AskView() {
               </div>
             )}
             {answer.rows.length === 0 ? (
-              <p style={{ color: '#9aa3ad' }}>No rows.</p>
+              <p style={{ color: 'var(--ink-mute)', fontStyle: 'italic', fontFamily: 'var(--font-display)', fontSize: '1rem' }}>No rows.</p>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table>
@@ -499,7 +467,9 @@ export default function AskView() {
                     {answer.rows.map((row, i) => (
                       <tr key={i}>
                         {answer.columns.map((c) => (
-                          <td key={c}>{row[c] === null ? '—' : String(row[c])}</td>
+                          <td key={c} style={{ fontFamily: typeof row[c] === 'number' ? 'var(--font-mono)' : 'inherit' }}>
+                            {row[c] === null ? '—' : String(row[c])}
+                          </td>
                         ))}
                       </tr>
                     ))}
